@@ -85,8 +85,14 @@ Item {
         return true;
     }
 
+    // 🔴 BUILT ONLY WHILE IT IS FIRING. This used to instantiate cells x cells
+    // Images unconditionally — 64 per dock item, 512 across a row, each one
+    // decoding the icon and holding a texture, all of them invisible and all of
+    // them costing layout and memory for ever. The dock's own frame meter went
+    // to 41ms a frame and 24fps, and the whole shell felt sluggish: an effect
+    // that plays for eight tenths of a second was being paid for continuously.
     Repeater {
-        model: root.cells * root.cells
+        model: root._t < 0 ? 0 : root.cells * root.cells
 
         Image {
             id: frag

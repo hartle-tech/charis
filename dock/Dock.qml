@@ -718,20 +718,45 @@ PanelWindow {
 
     color: "transparent"
 
-    HoverHandler {
-        id: hover
-        onPointChanged: {
-            const p = hover.point.position;
-            cursor.target = root.horizontal ? p.x : p.y;
-        }
-        onHoveredChanged: {
-            if (!hover.hovered)
-                return;
-            // Enter the row without a swipe across it. Without this the cursor
-            // spring starts from wherever it was left last time and the whole
-            // dock visibly ripples on entry.
-            const p = hover.point.position;
-            cursor.reset(root.horizontal ? p.x : p.y);
+    /*!
+        🔴 THE MAGNIFICATION USED TO FOLLOW THE WHOLE SURFACE'S HOVER, AND THE
+        DOCK GREW WHEN THE POINTER WAS NOWHERE NEAR IT.
+
+        The input mask is `bandThickness + whichever popup is open`. Leave a
+        stack open — or open one and never close it — and the mask reaches most
+        of the way up the screen; the pointer at y=648 on a 1152 display was
+        inside it, `hover.hovered` was true, and the row sat permanently rippled
+        around a cursor position it had recorded who-knows-when. `metrics` said
+        `ticking: false, subscribers: 0`: nothing was animating, the spring had
+        settled, at full magnification, and would stay there.
+
+        Magnification is a response to the pointer being over the DOCK, so it
+        listens to a region that is exactly the dock — not to the surface, which
+        is deliberately much larger for reasons that have nothing to do with
+        hovering.
+    */
+    Item {
+        id: bandArea
+        x: root.horizontal ? 0 : (root.edge === Qt.LeftEdge ? 0 : root.width - root.restExtent)
+        y: root.horizontal ? (root.edge === Qt.BottomEdge ? root.height - root.restExtent : 0) : 0
+        width: root.horizontal ? root.width : root.restExtent
+        height: root.horizontal ? root.restExtent : root.height
+
+        HoverHandler {
+            id: hover
+            onPointChanged: {
+                const p = hover.point.position;
+                cursor.target = root.horizontal ? p.x : p.y;
+            }
+            onHoveredChanged: {
+                if (!hover.hovered)
+                    return;
+                // Enter the row without a swipe across it. Without this the
+                // cursor spring starts from wherever it was left last time and
+                // the whole dock visibly ripples on entry.
+                const p = hover.point.position;
+                cursor.reset(root.horizontal ? p.x : p.y);
+            }
         }
     }
 
@@ -1083,7 +1108,13 @@ PanelWindow {
                     // Clearly out of the dock, whether or not far enough to
                     // remove. This is what separates "I meant to take it out"
                     // from "I was shuffling the order and wobbled".
-                    drag.attempted = edgeDist > root.restExtent + root.baseIconSize;
+                    // ⚠️ MORE THAN HALFWAY TO THE THRESHOLD. At "clear of the
+                    // dock by one icon" the refusal fired on an 85px nudge, and
+                    // an icon that vanishes and comes back reads as an
+                    // accidental removal even though nothing was removed. The
+                    // answer only appears once the gesture was plainly aimed
+                    // at getting rid of the thing.
+                    drag.attempted = edgeDist > root.restExtent + root.tearThreshold * 0.5;
                     if (!drag.tornOff)
                         drag.toIndex = root.indexNear(axisPos);
                 }

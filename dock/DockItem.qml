@@ -226,8 +226,16 @@ Item {
     property real _holdY: 0
     property bool _holding: false
 
-    /*! Play the removal — the icon's own pixels blown apart. */
+    /*! Play the removal — the icon's own pixels blown apart.
+
+        ⚠️ THE OFFSET IS HELD, exactly as the refusal holds it. Releasing the
+        drag clears `dragOffset`, so the burst played at the icon's SLOT in the
+        dock rather than where the icon was let go — half a screen away from
+        the gesture that caused it. */
     function vaporise(): void {
+        root._holdX = fx.value;
+        root._holdY = fy.value;
+        root._holding = true;
         burst.fire();
     }
 
@@ -329,7 +337,10 @@ Item {
         height: root.iconSize
         source: icon.source
         cells: 8
-        onFinished: root.dropAccepted()
+        onFinished: {
+            root._holding = false;
+            root.dropAccepted();
+        }
     }
 
     readonly property real _lift: bounce.value + tearLift.value
