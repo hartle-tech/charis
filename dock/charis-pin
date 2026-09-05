@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# charis-pin — put an application on the dock from anywhere.
+#
+# WHY THIS EXISTS. "Pin to Dock" belongs in whatever menu the user is already
+# looking at — the file manager, the launcher, a keybind, a terminal — not
+# only inside the dock. The dock has exposed `pin` over IPC for a while and
+# nothing called it, which is not an integration, it is a socket nobody is
+# plugged into.
+#
+#   charis-pin firefox                       # by desktop id
+#   charis-pin /usr/share/applications/x.desktop
+#   charis-pin --toggle steam
+#   charis-pin --remove steam
+#
+# ⚠️ ADDRESSES THE RUNNING DOCK, whatever it was launched from. `quickshell
+# ipc` identifies an instance by the config directory it was started with, and
+# the dock's is a package path that changes with every update — so it is read
+# from the live process rather than assumed. A hard-coded path silently
+# addresses nothing and exits 0.
+set -euo pipefail
+
+usage() {
+  cat >&2 <<'USAGE'
+charis-pin — add or remove an application on the Charis dock
+
+  charis-pin <id|path.desktop>     pin it
+  charis-pin --remove <id|path>    unpin it
+  charis-pin --toggle <id|path>    pin if absent, unpin if present
+
+The id is the .desktop file's basename without the extension: `firefox`,
+`org.gnome.Nautilus`, `steam`.
+USAGE
+  exit 2
+}
+
+action=pin
+case "${1:-}" in
+  -h|--help|"") usage ;;
+  --remove) action=unpin; shift ;;
+  --toggle) action=toggle; shift ;;
+esac
+[ $# -ge 1 ] || usage
+
+arg=$1
+# A path to a .desktop file is the common case when this is invoked from a file
+# manager, which passes what the user right-clicked. Reduce it to the id the
+# dock indexes by.
+id=$(basename -- "$arg")
+id=${id%.desktop}
+
+dock_dir=""
+for pid in $(ls /proc 2>/dev/null | grep -E '^[0-9]+$'); do
+  cmd=$(tr '\0' '\n' < "/proc/$pid/cmdline" 2>/dev/null || true)
+  case "$cmd" in
+    *charis*dock*)
+      # argv is: <quickshell> -p <config dir>
+      qs=$(printf '%s\n' "$cmd" | head -1)
+      dir=$(printf '%s\n' "$cmd" | tail -1)
+      [ -d "$dir" ] || continue
+      dock_dir=$dir
+      dock_qs=$qs
+      break
+      ;;
+  esac
+done
+
+if [ -z "$dock_dir" ]; then
+  echo "charis-pin: the dock does not appear to be running" >&2
+  exit 1
+fi
+
+pinned() {
+  "$dock_qs" -p "$dock_dir" ipc call dock config 2>/dev/null |
+    tr ',' '\n' | grep -c "\"$id\"" || true
+}
+
+case "$action" in
+  toggle) [ "$(pinned)" -gt 0 ] && action=unpin || action=pin ;;
+esac
+
+"$dock_qs" -p "$dock_dir" ipc call dock "$action" "$id"
+echo "charis-pin: $action $id"

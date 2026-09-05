@@ -98,6 +98,53 @@ pkgs.stdenvNoCC.mkDerivation {
         --add-flags "-p $out/share/charis/$app"
     done
 
+    # ── "Pin to Dock", from anywhere ──────────────────────────────────────
+    #
+    # 🔴 THE IPC EXISTED FOR A WEEK AND NOTHING CALLED IT. A `pin` method with
+    # no caller is not an integration, it is a socket nobody is plugged into,
+    # and it was reported as done twice.
+    #
+    # Two pieces, because there is no single mechanism every desktop honours:
+    #
+    #   charis-pin           a CLI, so a keybind, a terminal, a launcher or any
+    #                        file manager's "run a script" feature can reach it.
+    #   charis-pin.desktop   a handler for application/x-desktop, so right-
+    #                        clicking a .desktop file ANYWHERE and choosing
+    #                        Open With → Pin to Dock works. That is the closest
+    #                        standards-based thing to macOS's context menu
+    #                        entry, and it needs nothing installed per desktop.
+    #
+    # NoDisplay keeps it out of the applications menu — it is a verb for files,
+    # not a program anybody launches on its own.
+    install -Dm755 dock/charis-pin "$out/bin/charis-pin"
+    substituteInPlace "$out/bin/charis-pin" \
+      --replace-fail '#!/usr/bin/env bash' '#!${pkgs.runtimeShell}'
+
+    mkdir -p "$out/share/applications"
+    cat > "$out/share/applications/charis-pin.desktop" <<EOF
+    [Desktop Entry]
+    Type=Application
+    Name=Pin to Dock
+    Comment=Keep this application on the Charis dock
+    Exec=$out/bin/charis-pin %f
+    Icon=list-add
+    Terminal=false
+    NoDisplay=true
+    MimeType=application/x-desktop;
+    EOF
+    sed -i 's/^    //' "$out/share/applications/charis-pin.desktop"
+
+    # Nautilus runs anything executable in this directory as a right-click
+    # Scripts entry, with the selection in \$NAUTILUS_SCRIPT_SELECTED_FILE_PATHS.
+    mkdir -p "$out/share/nautilus/scripts"
+    cat > "$out/share/nautilus/scripts/Pin to Dock" <<EOF
+    #!${pkgs.runtimeShell}
+    printf '%s' "\$NAUTILUS_SCRIPT_SELECTED_FILE_PATHS" |
+      while IFS= read -r f; do [ -n "\$f" ] && $out/bin/charis-pin "\$f"; done
+    EOF
+    sed -i 's/^    //' "$out/share/nautilus/scripts/Pin to Dock"
+    chmod +x "$out/share/nautilus/scripts/Pin to Dock"
+
     runHook postInstall
   '';
 
