@@ -31,6 +31,10 @@ Item {
         real thing rather than a mock-up of it. */
     required property var dock
 
+    /*! Mirrored from the config, because the compositor's blur is not a
+        property of the dock item. */
+    property real backdropBlur: 8
+
     /*!
         Emitted continuously while a control is moved. The caller sets the
         config value, which flows back to the dock through its existing
@@ -430,6 +434,15 @@ Item {
                 value: root.dock.blurAmount
                 onValueChanged: root.changed("blurAmount", Math.round(value))
                 onSettled: v => root.committed("blurAmount", Math.round(v))
+            }
+
+            Slider {
+                label: "Backdrop blur"
+                from: 0
+                to: 20
+                value: root.backdropBlur
+                onValueChanged: root.changed("backdropBlur", Math.round(value))
+                onSettled: v => root.committed("backdropBlur", Math.round(v))
             }
 
             Heading {

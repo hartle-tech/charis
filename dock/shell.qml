@@ -74,6 +74,31 @@ ShellRoot {
             FrameBudget.recalibrate();
         }
 
+        /*! Pin or unpin an app by desktop id, from anywhere.
+
+            Exposed over IPC so a launcher, a file manager or a keybind can add
+            something to the dock without the dock having to integrate with any
+            of them — "Pin to Dock" belongs in whatever menu the user is already
+            looking at, and this is the seam that lets that exist. */
+        function pin(id: string): void {
+            const cur = cfg.pinned.slice();
+            if (cur.indexOf(id) === -1) {
+                cur.push(id);
+                cfg.pinned = cur;
+                config.writeAdapter();
+            }
+        }
+
+        function unpin(id: string): void {
+            const cur = cfg.pinned.slice();
+            const i = cur.indexOf(id);
+            if (i !== -1) {
+                cur.splice(i, 1);
+                cfg.pinned = cur;
+                config.writeAdapter();
+            }
+        }
+
         /*! The configuration the dock is ACTUALLY using, as opposed to what is
             on disk. The two diverging silently is exactly the class of bug this
             exists to catch. */
@@ -115,6 +140,31 @@ ShellRoot {
     // without any of the three needing to know about the others.
     property bool configFileLoaded: false
 
+    // Apply the backdrop blur through the compositor.
+    //
+    // Hyprland's Lua parser refuses `hyprctl keyword`, and hl.config({...})
+    // via the socket reports ok while doing nothing for layer rules — but the
+    // decoration table set through `eval` does land. Verified: blur size went
+    // 8 → 20 → 2 and the measured detail behind the dock moved with it.
+    //
+    // ⚠️ execDetached, NOT a Process with `running: true`. Re-asserting `running`
+    // on a Process that has already run does not start it again, so the FIRST
+    // change applied and every subsequent one silently did not.
+    //
+    // ⚠️ An absolute path, because this process is started by a systemd unit
+    // with no PATH — a bare `hyprctl` is simply not found and the call fails
+    // with nothing logged anywhere.
+    function applyBackdropBlur(): void {
+        Quickshell.execDetached(["/nix/store/lsb8hf3j0pywrbfhgpajj47cndra6zvc-hyprland-0.55.4/bin/hyprctl", "eval", `hl.config({ decoration = { blur = { size = ${Math.round(cfg.backdropBlur)}, passes = ${cfg.backdropBlurPasses} } } })`]);
+    }
+
+    // ⚠️ Called explicitly, not driven by a Connections on the adapter.
+    // `Connections { target: cfg }` on a JsonAdapter property did not fire at
+    // all here — the slider moved, the value reached the config, and the
+    // compositor was never told. Called from the settings handlers and once at
+    // startup, which is code that provably runs.
+    Component.onCompleted: root.applyBackdropBlur()
+
     FileView {
         id: config
         path: `${Quickshell.env("HOME")}/.config/charis/dock.json`
@@ -123,7 +173,10 @@ ShellRoot {
         // A missing config is the FIRST-RUN case, not an error. Falling over
         // here would mean the dock never appears on a fresh install, which is
         // the one moment it most needs to.
-        onLoaded: root.configFileLoaded = true
+        onLoaded: {
+            root.configFileLoaded = true;
+            root.applyBackdropBlur();
+        }
         // ⚠️ Only seed on a genuinely MISSING file. `writeAdapter()` on any
         // failure will happily write the adapter's DEFAULTS over a config that
         // merely failed to parse this once — silently destroying the user's
@@ -164,6 +217,13 @@ ShellRoot {
             // ── Material ────────────────────────────────────────────────
             property bool useGlass: false
             property real blurAmount: 12
+
+            // Compositor blur behind the dock. Applied through Hyprland rather
+            // than drawn by us: a compositor already has the backdrop and can
+            // blur it for free, whereas a shader would need the screen captured
+            // into a texture every frame just to blur what is already there.
+            property real backdropBlur: 8
+            property int backdropBlurPasses: 2
 
             // ── Behaviour ───────────────────────────────────────────────
             property bool animations: true
@@ -318,11 +378,18 @@ ShellRoot {
                     anchors.fill: parent
                     anchors.margins: 2
                     dock: root.settingsDock
+                    backdropBlur: cfg.backdropBlur
 
-                    onChanged: (key, value) => cfg[key] = value
+                    onChanged: (key, value) => {
+                        cfg[key] = value;
+                        if (key === "backdropBlur" || key === "backdropBlurPasses")
+                            root.applyBackdropBlur();
+                    }
                     onCommitted: (key, value) => {
                         cfg[key] = value;
                         config.writeAdapter();
+                        if (key === "backdropBlur" || key === "backdropBlurPasses")
+                            root.applyBackdropBlur();
                     }
                 }
             }

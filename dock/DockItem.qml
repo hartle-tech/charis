@@ -149,18 +149,27 @@ Item {
     // other half-cycle; macOS's icon hops and lands, it never dips.
     Spring {
         id: bounce
-        response: 0.34
-        damping: 0.30
+        // Slower and looser than a UI transition. macOS's launch bounce is a
+        // lazy half-second arc, and at 0.34s the hop is over before the eye
+        // registers it as a hop rather than a flicker.
+        response: 0.52
+        damping: 0.22
         epsilon: 0.05
     }
 
     Timer {
         id: bouncer
-        interval: 560
+        interval: 620
         repeat: true
         running: root.launching
         triggeredOnStart: true
-        onTriggered: bounce.impulse(-240)
+        // Sized to the ICON, not a fixed pixel count. An impulse of v lifts a
+        // spring by roughly v/ω, and ω = 2π/0.52 ≈ 12.1 — so a hop about one
+        // icon tall needs an impulse near 12.1 × iconSize. The first version
+        // used a flat -240, which lifts a 52px icon by thirteen pixels: present
+        // in the code, invisible on the screen, and exactly the kind of "it is
+        // implemented" that is worth nothing.
+        onTriggered: bounce.impulse(-12.1 * root.iconSize)
     }
 
     // Stop bouncing whether or not the app ever appeared. An app that fails to
