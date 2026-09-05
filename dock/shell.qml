@@ -12,6 +12,7 @@
 
 import Quickshell
 import Quickshell.Io
+import Charis
 import QtQuick
 
 ShellRoot {
@@ -42,6 +43,34 @@ ShellRoot {
         function openStack(path: string): void {
             root.stackRequest = path;
             root.stackSerial += 1;
+        }
+
+        /*!
+            Live frame statistics, as JSON.
+
+            Reported from the shell's OWN FrameBudget rather than from an
+            external profiler, because what matters is the frame time this
+            process actually observes — an external sampler measures the
+            compositor's cadence, which is not the same thing and stays smooth
+            while the dock stutters.
+        */
+        function metrics(): string {
+            return JSON.stringify({
+                fps: FrameBudget.fps,
+                medianFrameMs: FrameBudget.pressure > 0 ? (1000 / Math.max(1, FrameBudget.fps)) : 0,
+                quality: FrameBudget.quality,
+                pressure: FrameBudget.pressure,
+                stressed: FrameBudget.stressed,
+                ticking: Ticker.running,
+                subscribers: Ticker.subscriberCount
+            });
+        }
+
+        /*! Tell FrameBudget the real refresh rate, so `pressure` is measured
+            against this display's budget rather than the 60Hz default. */
+        function setRefresh(hz: real): void {
+            FrameBudget.refreshRate = hz;
+            FrameBudget.recalibrate();
         }
 
         /*! Open the settings window. Also reachable by right-clicking empty

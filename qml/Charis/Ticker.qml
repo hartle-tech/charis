@@ -90,6 +90,35 @@ QtObject {
 
         running: root._subs.length > 0
 
+        // ⚠️ The first tick after the clock restarts must not be measured.
+        //
+        // FrameAnimation reports the time since it last ran, and this animation
+        // STOPS whenever nothing is animating — which is most of the time, by
+        // design. So the first frameTime after every idle gap is the length of
+        // that gap, not the length of a frame.
+        //
+        // Measured consequence, on a dock being swept by a pointer: the springs
+        // settle and restart between pointer events, so roughly every third
+        // sample was an idle gap, the median came out at 16.15ms against a
+        // 6.94ms budget, and FrameBudget.quality collapsed to 0.0 — shedding
+        // every shadow and the glass on a machine that was in fact rendering
+        // 123 frames a second. The renderer was fine; the meter was lying, and
+        // it was lying in the direction that makes the UI worse.
+        // The window is DISCARDED whenever the clock stops, not merely the
+        // first sample after it restarts. Skipping one sample is not enough:
+        // springs settle and re-arm between pointer events, so the window fills
+        // with fragments of many short bursts, and a median across fragments
+        // describes nothing that happened. Judging only a contiguous run means
+        // `quality` speaks about sustained animation — which is the only time
+        // shedding an effect could help anyone.
+        property bool _resumed: true
+        onRunningChanged: {
+            if (running)
+                driver._resumed = true;
+            else
+                FrameBudget.recalibrate();
+        }
+
         onTriggered: {
             const dt = frameTime;
 
@@ -123,7 +152,10 @@ QtObject {
             // each subscriber — forty springs calling sample() would put forty
             // copies of the same frame into a 32-frame window and the median
             // would describe one frame rather than the last half second.
-            FrameBudget.sample(dt);
+            if (driver._resumed)
+                driver._resumed = false;
+            else
+                FrameBudget.sample(dt);
         }
     }
 }

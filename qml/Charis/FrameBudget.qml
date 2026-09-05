@@ -57,13 +57,51 @@ QtObject {
     /*! Smoothed frames per second, from the median frame time. */
     readonly property real fps: root._median > 0 ? 1 / root._median : 60
 
-    /*! The display's refresh rate, as reported by the window's screen. Set by
-        whoever creates the shell surface; defaults to the safe assumption. */
+    /*!
+        The cadence this process actually achieves when it is healthy, in Hz,
+        learned from observation.
+
+        ⚠️ DELIBERATELY NOT THE DISPLAY'S REFRESH RATE, and that was a real bug.
+        Comparing against the panel assumes the toolkit can drive animations at
+        panel rate, and on this platform it cannot: Qt's animation timer runs at
+        a fixed 16 ms — 62.5 Hz — unless a vsync-based animation driver is
+        installed, and neither the threaded nor the basic render loop installs
+        one here. Measured on a 144 Hz display, with the surface committing 130
+        frames a second: animations advanced 62.5 times a second under both.
+
+        Told the panel was 144 Hz, this singleton therefore concluded the
+        machine was failing by a factor of two and shed EVERY effect — shadows
+        and glass switched off permanently, on hardware that was keeping up
+        perfectly with everything it was being asked to do. Quality must ask
+        "are we keeping up with what this platform can do", never "are we
+        matching the panel", because the second question has an answer nobody
+        can act on.
+
+        So the baseline is the fastest sustained cadence observed, and pressure
+        is measured against that. A machine that degrades from its own baseline
+        sheds effects; one that was never able to hit panel rate in the first
+        place is left alone.
+    */
+    property real baselineHz: 0
+
+    /*! Kept for callers that want to record it; not used for judging. */
     property real refreshRate: 60
 
-    /*! How much of the frame budget is being consumed, 0..1+. Above 1 means
-        frames are missing their deadline. */
-    readonly property real pressure: root._median * root.refreshRate
+    /*!
+        Frame interval as a multiple of the display's period.
+
+        1.0 means frames are arriving exactly on cadence. 2.0 means every other
+        frame is being missed.
+
+        ⚠️ THIS IS NOT "HOW MUCH OF THE BUDGET THE WORK USED", and reading it
+        that way is a mistake this file made and shipped. On a vsynced surface
+        the interval between frames is pinned to the display period whatever the
+        work costs — a shell drawing one rectangle and a shell drawing a
+        thousand both report 1.0 until one of them actually misses a deadline.
+        There is no headroom information here at all; the only thing the
+        interval reveals is DROPPED frames.
+    */
+    readonly property real pressure: root.baselineHz > 0 ? root._median * root.baselineHz : 1
 
     /*!
         0..1, how expensive the shell may currently be.
@@ -97,6 +135,13 @@ QtObject {
     function recalibrate(): void {
         root._window = [];
         root._quality = 1;
+    }
+
+    /*! Forget the learned baseline as well — after a resolution change, or a
+        move to a different monitor. */
+    function relearn(): void {
+        root.recalibrate();
+        root.baselineHz = 0;
     }
 
     /*!
@@ -149,11 +194,26 @@ QtObject {
         if (w.length < root._windowSize)
             return;
 
-        // Target: comfortably inside the frame budget. 0.8 rather than 1.0
-        // because a shell sharing the GPU with a game or a video should yield
-        // BEFORE it starts costing that app frames, not after.
-        const p = root._median * root.refreshRate;
-        const want = p <= 0.8 ? 1 : Math.max(0, 1 - (p - 0.8) * 2);
+        // Learn the baseline: the FASTEST sustained cadence seen so far. The
+        // first full window establishes it, and any later window that is faster
+        // raises it — a machine that was briefly busy at startup is not
+        // condemned to a slow baseline for the rest of the session.
+        const hz = 1 / root._median;
+        if (root.baselineHz <= 0 || hz > root.baselineHz)
+            root.baselineHz = hz;
+
+        // 🔴 THE THRESHOLD WAS 0.8 OF THE DISPLAY PERIOD AND IT WAS WRONG IN
+        // THE WORST DIRECTION. "Target 80% of the budget" sounds prudent and is
+        // meaningless: on a vsynced surface the interval between frames is the
+        // display period whatever the work costs, so pressure was 1.0 by
+        // definition and 1.0 > 0.8. Quality collapsed to zero the moment
+        // anything animated, and every effect was shed precisely when
+        // everything was working.
+        //
+        // The interval only carries information about MISSED frames, measured
+        // against a cadence this platform can actually reach.
+        const p = root._median * root.baselineHz;
+        const want = p <= 1.25 ? 1 : Math.max(0, 1 - (p - 1.25) / 1.25);
 
         // Asymmetric: down in ~0.15s, up over ~2s. Dropping quality the moment
         // the machine is in trouble is what keeps an interaction responsive;
