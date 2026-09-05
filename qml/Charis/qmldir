@@ -1,0 +1,23 @@
+# Charis — the aphrOS motion and material library.
+#
+# Named for the Greek personification of grace, which is the whole brief: the
+# difference between a UI that moves and a UI that moves WELL. Sits under
+# Quickshell rather than replacing it — Quickshell supplies the Wayland
+# surfaces and the system services, this supplies what they should look and
+# feel like.
+#
+# ⚠️ NOTHING HERE MAY DEPEND ON QUICKSHELL OR ON APHROS. Every type below is
+# plain Qt Quick, so the library drops into any Qt 6.11 application — a
+# Quickshell bar, a KDE plasmoid, a normal desktop app. That constraint is the
+# reason this is a separate module instead of files inside the shell, and it
+# is worth defending on every addition: the moment one type imports Quickshell,
+# the library stops being usable by anyone who is not writing a Wayland shell.
+
+module Charis
+
+Spring 1.0 Spring.qml
+Squircle 1.0 Squircle.qml
+MagnifiedRow 1.0 MagnifiedRow.qml
+
+singleton FrameBudget 1.0 FrameBudget.qml
+singleton Ticker 1.0 Ticker.qml

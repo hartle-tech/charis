@@ -1,0 +1,11 @@
+# CharisBuild — the document model behind the visual builder.
+#
+# Separate from `Charis` on purpose. Charis is what you BUILD WITH: motion and
+# material primitives that belong in any Qt Quick app. CharisBuild is what the
+# BUILDER is made of, and an app that merely uses the library should never have
+# to import a QML serialiser to draw a button.
+#
+# Both are plain Qt Quick. Neither imports Quickshell.
+module CharisBuild
+
+singleton QmlWriter 1.0 QmlWriter.qml

@@ -1,0 +1,15 @@
+Charis
+Copyright 2026 HARTLE.TECH (NIPC 518241327, Porto, Portugal)
+
+A motion and material library for Qt Quick, and a visual builder whose output
+is ordinary code. Named for Charis, the Greek personification of grace — which
+is the whole brief: the difference between a UI that moves and one that moves
+well.
+
+Charis supplies the four things Qt Quick does not: spring motion integrated
+against real frame time, continuous-curvature corners, a single shared frame
+clock so an idle interface draws nothing, and an adaptive frame budget.
+
+Contact: contact@hartle.tech
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
