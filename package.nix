@@ -72,9 +72,29 @@ pkgs.stdenvNoCC.mkDerivation {
     # every icon path is "", and the dock renders a row of blank tiles. Baking a
     # value in here would freeze the app list to whatever was installed at build
     # time, so the service unit passes the session's own instead.
+    # 🔴 THE IMAGE-FORMAT PLUGINS ARE NOT OPTIONAL FOR A DOCK.
+    #
+    # A dock is a grid of other people's artwork, in whatever format each of
+    # them chose. Qt can decode PNG and JPEG on its own; everything else —
+    # WEBP, ICNS, TGA, and the rest — lives in qtimageformats, and SVG lives in
+    # qtsvg. A Qt build without them does not report a missing decoder: the
+    # Image just never reaches status Ready, and the dock quietly draws its
+    # "no icon" tile instead.
+    #
+    # Measured on this machine: the same dock, same config, same icon theme,
+    # rendered kitty and Steam as grey letter tiles under one Quickshell build
+    # and as their real icons under another. The only difference between the
+    # two was that one wrapper carried qtimageformats. Nothing in either log
+    # said a word about it.
+    #
+    # So the plugins come from this package rather than from whichever
+    # Quickshell happens to be around, and a distribution that ships a lean Qt
+    # cannot silently take icons away from the dock.
     for app in dock studio; do
       makeWrapper ${quickshell}/bin/quickshell "$out/bin/charis-$app" \
         --prefix QML2_IMPORT_PATH : "$out/${qmlPath}" \
+        --prefix QT_PLUGIN_PATH : "${pkgs.qt6.qtimageformats}/lib/qt-6/plugins" \
+        --prefix QT_PLUGIN_PATH : "${pkgs.qt6.qtsvg}/lib/qt-6/plugins" \
         --add-flags "-p $out/share/charis/$app"
     done
 
