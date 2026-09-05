@@ -323,10 +323,39 @@ Item {
 
     // ── Layout ──────────────────────────────────────────────────────────
     Flickable {
+        id: flick
         anchors.fill: parent
         anchors.margins: 18
         contentHeight: col.height + 20
         clip: true
+
+        // ⚠️ AN AFFORDANCE, NOT DECORATION. The panel is taller than it is
+        // allowed to be, so the last section — every behaviour toggle — sits
+        // below the fold with the content sliced clean off at the edge. With no
+        // bar there is nothing on screen that says the list continues, and a
+        // settings window that appears to be missing half its settings is
+        // indistinguishable from one that is.
+        //
+        // It fades out when nothing is happening, like a trackpad scrollbar,
+        // and appears the moment the content moves.
+        Rectangle {
+            parent: flick
+            anchors.right: parent.right
+            anchors.rightMargin: -10
+            y: flick.contentY + (flick.contentY / Math.max(1, flick.contentHeight - flick.height)) * (flick.height - height)
+            width: 3
+            radius: 1.5
+            height: Math.max(28, flick.height * (flick.height / Math.max(1, flick.contentHeight)))
+            visible: flick.contentHeight > flick.height
+            color: "#ffffff"
+            opacity: flick.moving ? 0.35 : 0.12
+
+            Behavior on opacity {
+                NumberAnimation {
+                    duration: 220
+                }
+            }
+        }
 
         Column {
             id: col
