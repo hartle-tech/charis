@@ -139,8 +139,12 @@ useful to anyone who is not writing a Wayland shell.
 ./scripts/test-charis.sh
 ```
 
-44 checks across three suites: spring physics against the closed form,
-magnification layout, and `write`/`parse` round-tripping.
+48 checks across four suites: spring physics against the closed form,
+magnification layout, `write`/`parse` round-tripping, and glass refraction.
+
+The last one needs a real GPU context — `ShaderEffect` renders *nothing* under
+`QT_QPA_PLATFORM=offscreen`, with no error — so the headless sweep skips it and
+says so. Run it by name on a real session.
 
 ---
 
