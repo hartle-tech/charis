@@ -63,13 +63,44 @@ QtObject {
         effect in and out without touching any other property. */
     property real amount: 1
 
+    /*!
+        Per-item width multipliers, or an empty list for a uniform row.
+
+        A divider is not an icon and should not occupy an icon's worth of space
+        — a full empty cell either side of a one-pixel line is most of what
+        makes a dock look loosely packed. Give it 0.4 and the row closes up
+        around it without the magnification arithmetic changing at all: the
+        scale curve is still a pure function of the pointer's distance from each
+        item's resting centre, and only the widths those centres are derived
+        from differ.
+
+        \qml
+        widthScale: items.map(i => i.kind === "separator" ? 0.4 : 1)
+        \endqml
+    */
+    property var widthScale: []
+
+    function _wf(i: int): real {
+        return (root.widthScale && root.widthScale.length > i) ? root.widthScale[i] : 1;
+    }
+
     readonly property real cell: root.itemSize + root.spacing
-    readonly property real restTotal: root.count > 0 ? root.count * root.cell - root.spacing : 0
+    readonly property real restTotal: {
+        if (root.count <= 0)
+            return 0;
+        let t = 0;
+        for (let i = 0; i < root.count; ++i)
+            t += root.itemSize * root._wf(i) + root.spacing;
+        return t - root.spacing;
+    }
     readonly property real restStart: (root.axisLength - root.restTotal) / 2
 
     /*! Resting centre of item \a i, in axis coordinates. */
     function restCentre(i: int): real {
-        return root.restStart + i * root.cell + root.itemSize / 2;
+        let run = root.restStart;
+        for (let k = 0; k < i; ++k)
+            run += root.itemSize * root._wf(k) + root.spacing;
+        return run + root.itemSize * root._wf(i) / 2;
     }
 
     function kernel(t: real): real {
@@ -99,7 +130,7 @@ QtObject {
         const sizes = [];
         let total = 0;
         for (let i = 0; i < root.count; i++) {
-            const s = root.itemSize * root.scaleAt(i);
+            const s = root.itemSize * root._wf(i) * root.scaleAt(i);
             sizes.push(s);
             total += s + root.spacing;
         }

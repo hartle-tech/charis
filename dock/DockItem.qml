@@ -412,8 +412,12 @@ Item {
 
             // Centred on the panel's band rather than on the item, which grows
             // out of the band when magnified.
-            y: root._horizontal ? (root.edge === Qt.TopEdge ? root.restIconSize / 2 - height / 2 : parent.height - root.restIconSize / 2 - height / 2) : undefined
-            x: root._horizontal ? undefined : (root.edge === Qt.LeftEdge ? root.restIconSize / 2 - width / 2 : parent.width - root.restIconSize / 2 - width / 2)
+            // ⚠️ Binding, not a ternary onto `undefined`. QML cannot assign
+            // undefined to a real — "Unable to assign [undefined] to x", eight
+            // times a frame — and the value it keeps instead is whatever was
+            // there last, which is not the same as leaving the anchor in
+            // charge. `when` genuinely removes the binding on the axis the
+            // anchor owns.
 
             readonly property real thin: sepHover.hovered || sepDrag.active ? 2 : 1
             readonly property real long: root.restIconSize * (sepHover.hovered || sepDrag.active ? 0.72 : 0.58)
@@ -421,6 +425,19 @@ Item {
             height: root._horizontal ? sep.long : sep.thin
             radius: 1
             color: Qt.rgba(1, 1, 1, sepHover.hovered || sepDrag.active ? 0.55 : 0.22)
+
+            Binding {
+                target: sep
+                property: "y"
+                when: root._horizontal
+                value: root.edge === Qt.TopEdge ? root.restIconSize / 2 - sep.height / 2 : sep.parent.height - root.restIconSize / 2 - sep.height / 2
+            }
+            Binding {
+                target: sep
+                property: "x"
+                when: !root._horizontal
+                value: root.edge === Qt.LeftEdge ? root.restIconSize / 2 - sep.width / 2 : sep.parent.width - root.restIconSize / 2 - sep.width / 2
+            }
 
             Behavior on color {
                 ColorAnimation {

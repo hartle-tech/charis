@@ -427,6 +427,10 @@ PanelWindow {
         magnification: root.magnification
         influenceCells: root.influenceCells
         amount: magnify.value
+        // The divider gets a fraction of a cell instead of a whole one. A full
+        // empty slot either side of a one-pixel line is most of what made the
+        // row read as loosely packed.
+        widthScale: root.items.map(i => i.kind === "separator" ? 0.34 : 1)
     }
 
     readonly property var layout: row.metrics
@@ -466,8 +470,20 @@ PanelWindow {
     property real _latchedExtent: root.restExtent
     exclusiveZone: root.autoHide ? 0 : Math.round(root._latchedExtent)
 
-    onRestExtentChanged: if (!gripDrag.active)
-        root._latchedExtent = root.restExtent
+    // ⚠️ A SETTLE, NOT JUST A DRAG GUARD. Latching only while the resize GRIP
+    // is held missed the other way to resize a dock: the Icon size slider in
+    // the settings panel, which emits continuously and reflowed every tiled
+    // window on the output for as long as the operator kept dragging it. The
+    // reservation is a statement about the finished dock, so it waits until the
+    // dock has stopped changing.
+    onRestExtentChanged: extentSettle.restart()
+
+    Timer {
+        id: extentSettle
+        interval: 180
+        onTriggered: if (!gripDrag.active)
+            root._latchedExtent = root.restExtent
+    }
 
     // 🔴 A VERTICAL DOCK HAD NO HEIGHT AT ALL. `implicitHeight` is
     // `horizontal ? surfaceExtent : 0`, so on a left- or right-hand dock the
@@ -940,6 +956,7 @@ PanelWindow {
         }
 
         Repeater {
+            id: rowItems
             model: root.items
 
             DockItem {
@@ -1005,13 +1022,23 @@ PanelWindow {
                 onLaunchTimedOut: root.endLaunch(item.modelData.key)
 
                 onDragStarted: {
-                    // Only pinned apps reorder. Dragging a running-but-unpinned
-                    // icon around would imply an order that vanishes the moment
-                    // the app quits, and dragging the separator is meaningless.
-                    if (item.modelData.kind !== "app" || !item.modelData.pinned)
+                    // Separators and folders do not reorder; everything else
+                    // does.
+                    //
+                    // ⚠️ AN UNPINNED APP IS DRAGGABLE TOO, and dropping it is
+                    // how it gets pinned. It used to be refused outright on the
+                    // grounds that ordering something transient is meaningless
+                    // — true, and the answer is not to refuse the gesture but
+                    // to make it MEAN something: an app on the dock only
+                    // because it is running becomes a permanent resident at
+                    // wherever you put it down. That is the shortest path from
+                    // "I use this a lot" to "keep it", and it is the one macOS
+                    // offers.
+                    if (item.modelData.kind !== "app")
                         return;
                     drag.fromIndex = item.index;
                     drag.toIndex = item.index;
+                    drag.wasUnpinned = !item.modelData.pinned;
                     drag.active = true;
                 }
                 onDragMoved: (axisPos, crossPos) => {
@@ -1032,10 +1059,20 @@ PanelWindow {
                     // threshold is the SCREEN'S CENTRE now — you have to mean
                     // it, and the distance is one nobody reaches by accident.
                     drag.tornOff = edgeDist > root.tearThreshold;
+                    // Clearly out of the dock, whether or not far enough to
+                    // remove. This is what separates "I meant to take it out"
+                    // from "I was shuffling the order and wobbled".
+                    drag.attempted = edgeDist > root.restExtent + root.baseIconSize;
                     if (!drag.tornOff)
                         drag.toIndex = root.indexNear(axisPos);
                 }
                 onDragEnded: drag.commit()
+
+                // The two answers to a removal gesture. Which one plays is
+                // decided by how far the icon went; the icon itself decides
+                // what that looks like.
+                onDropRefused: item.opacity = 1
+                onDropAccepted: root.setPinned(item.modelData.kind === "folder" ? item.modelData.folder : (item.modelData.pinId ?? item.modelData.key), false)
 
                 // The separator resizes the dock, exactly as it does on macOS.
                 onSeparatorPressed: {
@@ -1078,6 +1115,9 @@ PanelWindow {
 
         property bool active: false
         property bool tornOff: false
+        property bool wasUnpinned: false
+        /*! Dragged clearly out of the dock, but not far enough to remove. */
+        property bool attempted: false
         property int fromIndex: -1
         property int toIndex: -1
 
@@ -1089,15 +1129,50 @@ PanelWindow {
             const from = drag.fromIndex;
             const to = drag.toIndex;
             const removed = drag.tornOff;
+            const tried = drag.attempted;
+            const wasUnpinned = drag.wasUnpinned;
             drag.reset();
             if (from < 0)
                 return;
 
-            // Dragged clear of the dock and released: unpin it, as on macOS.
+            const cell = rowItems.itemAt(from);
+
+            // Dragged past the threshold: the icon's own pixels are blown
+            // apart, and it is unpinned when they land. Unpinning first would
+            // destroy the item — and with it the artwork the burst is made of —
+            // before a single frame had drawn.
             if (removed) {
+                if (cell)
+                    cell.vaporise();
+                else {
+                    const it = root.items[from];
+                    if (it)
+                        root.setPinned(it.kind === "folder" ? it.folder : (it.pinId ?? it.key), false);
+                }
+                return;
+            }
+
+            // Dragged out but not far enough. The gesture is REFUSED, and it
+            // has to look like an answer rather than like a dropped frame: the
+            // icon switches off like a CRT and comes back in its slot.
+            if (tried && cell) {
+                cell.refuse();
+                return;
+            }
+
+            // An app that was only on the dock because it is running, put down
+            // somewhere deliberate: that is a request to keep it.
+            if (wasUnpinned) {
                 const it = root.items[from];
-                if (it)
-                    root.setPinned(it.kind === "folder" ? it.folder : (it.pinId ?? it.key), false);
+                if (!it)
+                    return;
+                const id = it.pinId ?? it.key;
+                const next = root.pinned.slice();
+                // `to` indexes the whole row — pinned apps, then running ones,
+                // then the separator and folders — so it has to be clamped into
+                // the pinned list's own range before it means anything there.
+                next.splice(Math.max(0, Math.min(next.length, to)), 0, id);
+                root.pinnedReordered(next);
                 return;
             }
 
@@ -1117,6 +1192,8 @@ PanelWindow {
         function reset(): void {
             drag.active = false;
             drag.tornOff = false;
+            drag.attempted = false;
+            drag.wasUnpinned = false;
             drag.fromIndex = -1;
             drag.toIndex = -1;
         }

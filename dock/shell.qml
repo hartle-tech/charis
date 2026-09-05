@@ -296,7 +296,13 @@ ShellRoot {
 
             // ── Appearance ──────────────────────────────────────────────
             property real edgeGap: 8
-            property real spacing: 8
+            /*! Gap between icons.
+                🔴 8 WAS TOO LOOSE. With `bgPad` at 1.5x the spacing, 8 put 12
+                pixels of panel above and below the icons and 8 between every
+                pair — a row that reads as separate buttons rather than as one
+                object. macOS sits nearer 4. Reported as wanting the icons, the
+                separator and the folders comfortably tighter. */
+            property real spacing: 4
             property real cornerRoundness: 0.28
             /*! The desktop wallpaper, for the refracting glass to bend.
 
