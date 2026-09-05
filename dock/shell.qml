@@ -169,6 +169,44 @@ ShellRoot {
             });
         }
 
+        /*!
+            Where every item in the row actually is, in SCREEN logical
+            coordinates, as JSON.
+
+            🔴 EVERY HARNESS THAT DROVE THIS DOCK COMPUTED ICON POSITIONS FROM
+            THE CONFIG, AND EVERY ONE OF THEM WENT WRONG. The row is centred in
+            the surface, so its start depends on the total width — which depends
+            on the icon size, the spacing, how many apps are running, whether a
+            separator is present, and now on the separator being 0.34 of a cell
+            rather than a whole one. The last change moved the first icon 133
+            pixels and a scripted drag pressed on bare panel: the pointer moved,
+            the button went down, and the recording showed a dock doing nothing.
+
+            The dock knows where its icons are. Asking it is not a test hook
+            bolted on — it is the same seam `pin` and `bounce` use, and any
+            external launcher wanting to point at a dock icon needs it too.
+        */
+        function layout(): string {
+            const d = root.settingsDock;
+            if (!d)
+                return "[]";
+            const out = [];
+            for (let i = 0; i < d.count; ++i) {
+                const it = d.items[i];
+                out.push({
+                    key: it.key,
+                    kind: it.kind,
+                    pinned: it.pinned === true,
+                    // ⚠️ Raw, not Math.round()ed. Rounding here turned every
+                    // number into JSON `null` — the values were right the whole
+                    // time and the readout said the geometry was missing.
+                    centre: d.itemCentre(i),
+                    cross: d.itemCross()
+                });
+            }
+            return JSON.stringify(out);
+        }
+
         /*! Open the settings window. Also reachable by right-clicking empty
             space on the dock — an IPC-only settings panel is one nobody finds. */
         function settings(): void {

@@ -208,10 +208,23 @@ Item {
     signal dropAccepted
 
     /*! Play the "not far enough" answer — a CRT switching off, then the icon
-        returns to its slot. */
+        returns to its slot.
+
+        ⚠️ THE OFFSET IS HELD FOR THE DURATION. Releasing the drag clears
+        `dragOffset`, so without this the icon springs home WHILE the collapse
+        plays and the effect happens somewhere the user never released
+        anything — two animations at once, neither legible. It switches off
+        where you let go, and only then comes back. */
     function refuse(): void {
+        root._holdX = fx.value;
+        root._holdY = fy.value;
+        root._holding = true;
         crt.start();
     }
+
+    property real _holdX: 0
+    property real _holdY: 0
+    property bool _holding: false
 
     /*! Play the removal — the icon's own pixels blown apart. */
     function vaporise(): void {
@@ -298,7 +311,10 @@ Item {
     // user unsure whether the app is still pinned.
     CrtOff {
         id: crt
-        onFinished: root.dropRefused()
+        onFinished: {
+            root._holding = false;
+            root.dropRefused();
+        }
     }
 
     // ⚠️ A SIBLING OF THE ICON, NOT A CHILD. `opacity` in Qt Quick applies to
@@ -322,14 +338,14 @@ Item {
     // glued to the pointer — and slower on release so it eases home.
     Spring {
         id: fx
-        target: root.dragOffset.x
+        target: root._holding ? root._holdX : root.dragOffset.x
         response: dragger.active ? 0.045 : 0.34
         damping: dragger.active ? 1.0 : 0.7
         epsilon: 0.05
     }
     Spring {
         id: fy
-        target: root.dragOffset.y
+        target: root._holding ? root._holdY : root.dragOffset.y
         response: dragger.active ? 0.045 : 0.34
         damping: dragger.active ? 1.0 : 0.7
         epsilon: 0.05

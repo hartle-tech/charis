@@ -435,6 +435,27 @@ PanelWindow {
 
     readonly property var layout: row.metrics
 
+    /*! Position of item \a i along the dock's axis, at rest, IN THE SURFACE'S
+        OWN FRAME.
+
+        ⚠️ Not screen coordinates. A layer-shell window has no `x`/`y` in QML —
+        the compositor places it and never tells the client where. Returning
+        window-frame numbers and letting the caller add the surface origin from
+        `hyprctl layers` is honest; returning `root.x + …` produced `null` for
+        every item, because `undefined + n` is NaN and JSON renders that as
+        null. */
+    function itemCentre(i: int): real {
+        return row.restCentre(i);
+    }
+
+    /*! Position across the dock's axis — the middle of the resting band, which
+        is where a pointer has to be to hit an icon. Surface frame. */
+    function itemCross(): real {
+        const far = root.horizontal ? root.height : root.width;
+        const inset = root.edgeGap + root.bgPad + root.baseIconSize / 2;
+        return (root.edge === Qt.BottomEdge || root.edge === Qt.RightEdge) ? far - inset : inset;
+    }
+
     // ── Surface ─────────────────────────────────────────────────────────
     WlrLayershell.layer: WlrLayer.Top
     WlrLayershell.namespace: "charis-dock"
