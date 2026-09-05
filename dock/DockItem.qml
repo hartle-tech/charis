@@ -135,6 +135,18 @@ Item {
 
     readonly property bool isSeparator: root.kind === "separator"
 
+    /*! How much of the dock's background lies BEYOND this item, between its
+        edge-facing side and the outside of the panel.
+
+        🔴 THE RUNNING INDICATOR WAS DRAWN OUTSIDE THE DOCK AND NOBODY EVER SAW
+        IT. It was anchored to `iconBox.bottom` plus a margin — and the item
+        already ends flush with the icon, so "below the icon" is below the
+        panel's own bottom edge. On this machine the dot's top landed at 249.6
+        in a 249.2-tall band: off the end, every time, on every running app,
+        since the feature shipped. The item cannot work this out for itself
+        because it does not know the padding the dock keeps around the row. */
+    property real edgeInset: 0
+
     /*! Offset from where the drag started, so the icon FOLLOWS THE POINTER.
 
         🔴 IT DID NOT BEFORE, AND THE GESTURE FELT BROKEN. The row re-laid-out
@@ -268,13 +280,17 @@ Item {
     // read as having mass.
     Hop {
         id: bounce
-        // Heavy enough to fall convincingly on a display this size. At 2600
-        // px/s² a one-icon hop takes about 0.42s up and down, which is close to
-        // macOS and comfortably slower than a UI transition.
-        gravity: 2600
-        // A little over half the speed kept per contact: three visible hops of
-        // decreasing height per impulse, then rest.
-        restitution: 0.55
+        // ⚠️ LIGHTER THAN IT WAS, DELIBERATELY. 2600 px/s² was chosen against a
+        // 52px icon; the dock resizes to 128, and the same acceleration on an
+        // arc three times as tall reads as violence rather than as weight.
+        // 1800 keeps a comparable arc DURATION (~0.42s) at the lower apex
+        // below, which is the property that actually says "still working".
+        gravity: 1800
+        // 🔴 0.55 GAVE THREE VISIBLE HOPS PER IMPULSE and the dock read as
+        // agitated — the operator's words were "too strong and too high". macOS
+        // does ONE arc, a beat of rest, and another. 0.3 leaves a second hop at
+        // 9% of the first, which lands as a settle rather than as a bounce.
+        restitution: 0.3
     }
 
     Timer {
@@ -287,10 +303,15 @@ Item {
         repeat: true
         running: root.launching
         triggeredOnStart: true
-        // 🔴 1.05x AN ICON WAS TOO MUCH. A full icon-height hop reads as the
-        // dock shouting; macOS's is closer to half, and the point of the
-        // gesture is "still working", not "look at me". Half an icon, with the
-        // same ballistic arc.
+        // 🔴 1.05x AN ICON WAS TOO MUCH, AND SO WAS 0.5. A full icon-height hop
+        // reads as the dock shouting; the point of the gesture is "still
+        // working", not "look at me". 0.3 of an icon it is.
+        //
+        // 🔴 MEASURED AGAINST THE RESTING SIZE, NOT THE LIVE ONE. `iconSize` is
+        // the MAGNIFIED size, so an icon that happened to be under the pointer
+        // when the timer fired was thrown 1.9× as high as its neighbours — the
+        // one icon you are looking at is the one that bounces hardest. On this
+        // machine's 128px dock that was a 122px arc where the rest got 64.
         //
         // Stated as a HEIGHT, not as an impulse. The apex of a ballistic hop
         // is v²/2g, so "one icon tall" and "720 px/s" are only the same at one
@@ -299,7 +320,7 @@ Item {
         // lifted a 52px icon by thirteen pixels: present in the code, invisible
         // on the screen, and exactly the kind of "it is implemented" that is
         // worth nothing.
-        onTriggered: bounce.launchToHeight(root.iconSize * 0.5)
+        onTriggered: bounce.launchToHeight(root.restIconSize * 0.3)
     }
 
     // Stop bouncing whether or not the app ever appeared. An app that fails to
@@ -677,22 +698,47 @@ Item {
     }
 
     // ── Running indicator ───────────────────────────────────────────────
+    //
+    // macOS's is a single small dot in the strip of dock BELOW the icon. Three
+    // things make it read as discreet rather than as a status light, and this
+    // had none of them:
+    //
+    // 🔴 It was sized from `iconSize`, the MAGNIFIED size — 7.7px at rest on
+    //    this dock, swelling to 14px under the pointer. An indicator that grows
+    //    when you look at it is an animation, not an indicator. It is now a
+    //    fixed 3–4px, derived from the RESTING size and capped in absolute
+    //    pixels, because a dot's job is the same at every dock size.
+    // 🔴 It was anchored to `iconBox`, which carries the launch bounce — so the
+    //    dot hopped along with the icon. Apple's stays put; the icon leaves the
+    //    ground and the mark of the running app does not.
+    // 🔴 It sat OUTSIDE the panel entirely (see `edgeInset`), so none of this
+    //    was visible at all.
+    //
+    // Opacity 0.6 rather than 0.85: at 4px against a translucent panel, 0.85
+    // white is a bright pinprick that draws the eye before the icon does.
     Rectangle {
         id: dot
 
-        width: root.iconSize * 0.06
+        width: Math.max(3, Math.min(4, root.restIconSize * 0.035))
         height: width
         radius: width / 2
         color: "white"
-        opacity: (root.running && !root.isSeparator) ? 0.85 : 0
+        opacity: (root.running && !root.isSeparator) ? 0.6 : 0
 
-        anchors.horizontalCenter: root._horizontal ? iconBox.horizontalCenter : undefined
-        anchors.verticalCenter: root._horizontal ? undefined : iconBox.verticalCenter
-        anchors.top: root.edge === Qt.BottomEdge ? iconBox.bottom : undefined
-        anchors.bottom: root.edge === Qt.TopEdge ? iconBox.top : undefined
-        anchors.left: root.edge === Qt.RightEdge ? undefined : (root.edge === Qt.LeftEdge ? iconBox.right : undefined)
-        anchors.right: root.edge === Qt.LeftEdge ? undefined : (root.edge === Qt.RightEdge ? iconBox.left : undefined)
-        anchors.margins: root.iconSize * 0.05
+        // Centred in the padding strip between the row and the outside of the
+        // panel, on whichever side the screen edge is.
+        readonly property real inset: Math.max(root.edgeInset / 2, dot.width / 2 + 1)
+
+        anchors.horizontalCenter: root._horizontal ? parent.horizontalCenter : undefined
+        anchors.verticalCenter: root._horizontal ? undefined : parent.verticalCenter
+        anchors.top: root.edge === Qt.TopEdge ? parent.top : undefined
+        anchors.bottom: root.edge === Qt.BottomEdge ? parent.bottom : undefined
+        anchors.left: root.edge === Qt.LeftEdge ? parent.left : undefined
+        anchors.right: root.edge === Qt.RightEdge ? parent.right : undefined
+        anchors.topMargin: root.edge === Qt.TopEdge ? -(dot.inset + dot.height / 2) : 0
+        anchors.bottomMargin: root.edge === Qt.BottomEdge ? -(dot.inset + dot.height / 2) : 0
+        anchors.leftMargin: root.edge === Qt.LeftEdge ? -(dot.inset + dot.width / 2) : 0
+        anchors.rightMargin: root.edge === Qt.RightEdge ? -(dot.inset + dot.width / 2) : 0
 
         Behavior on opacity {
             NumberAnimation {

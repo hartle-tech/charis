@@ -1112,6 +1112,10 @@ PanelWindow {
                 toplevels: item.modelData.toplevels
                 iconSize: root.layout.sizes[item.index] ?? root.baseIconSize
                 edge: root.edge
+                // The padding the dock keeps between the row and the outside
+                // of its background — the strip the running indicator lives in.
+                // The item is laid out flush with the icons and cannot see it.
+                edgeInset: content.bgPad + content.edgeGap
 
                 // Dim the icon being dragged so the gap it leaves reads as a
                 // hole it came out of, rather than as the row having lost one.
@@ -1238,7 +1242,26 @@ PanelWindow {
                         sepResize.startEdgeDist = d;
                         return;
                     }
-                    root.iconSizeLive(Math.max(24, Math.min(128, sepResize.start + (d - sepResize.startEdgeDist))));
+                    // 🔴 GAIN OF TWO, AND IT IS NOT A FEEL ADJUSTMENT — AT 1:1
+                    // THE DOCK COULD NOT REACH ITS OWN MINIMUM.
+                    //
+                    // The divider is grabbed at the icons' CENTRE line, which
+                    // sits `edgeGap + bgPad + iconSize/2` from the screen edge.
+                    // Shrink the dock by 1px at 1:1 and that line only descends
+                    // by half a pixel — so the pointer runs out of screen long
+                    // before the dock runs out of size. Measured on this
+                    // machine: from 128px the drag reached 78 and then did
+                    // nothing at all for seven further steps because the cursor
+                    // was pinned at y=1151 on a 1152-tall output. Reported as
+                    // "it stops triggering when hovering towards the edge of
+                    // the screen where it's hidden", and that is exactly what
+                    // it is.
+                    //
+                    // Doubling the gain makes the divider track the pointer
+                    // one-for-one — d_divider = bgPad + size/2, so Δsize = 2Δd
+                    // means Δd_divider = Δd — which is both the fix and the
+                    // reason macOS's handle feels glued to the cursor.
+                    root.iconSizeLive(Math.max(24, Math.min(128, sepResize.start + 2 * (d - sepResize.startEdgeDist))));
                 }
 
                 onSeparatorReleased: {
