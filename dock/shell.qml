@@ -20,6 +20,8 @@ ShellRoot {
     // Shared, because `Variants` builds one Dock per screen and an IpcHandler
     // per dock would register the same target several times. The handler lives
     // here and the docks bind to these.
+    property bool settingsOpen: false
+    property var settingsDock: null
     property real magnifyOverride: -1
     property string stackRequest: ""
     property int stackSerial: 0
@@ -40,6 +42,12 @@ ShellRoot {
         function openStack(path: string): void {
             root.stackRequest = path;
             root.stackSerial += 1;
+        }
+
+        /*! Open the settings window. Also reachable by right-clicking empty
+            space on the dock — an IPC-only settings panel is one nobody finds. */
+        function settings(): void {
+            root.settingsOpen = true;
         }
 
         function closeStack(): void {
@@ -104,6 +112,9 @@ ShellRoot {
             property bool resizable: true
             property string folderView: "grid"
 
+            // { "<desktop id or appId>": "/path/to/image.png" }
+            property var iconOverrides: ({})
+
             property real debugCursor: -1
         }
     }
@@ -138,6 +149,7 @@ ShellRoot {
             animations: cfg.animations
             resizable: cfg.resizable
             folderView: cfg.folderView
+            iconOverrides: cfg.iconOverrides
             debugCursor: root.magnifyOverride >= 0 ? root.magnifyOverride : cfg.debugCursor
             stackRequest: root.stackRequest
             stackSerial: root.stackSerial
@@ -166,6 +178,19 @@ ShellRoot {
                 config.writeAdapter();
             }
 
+            onSettingsRequested: {
+                root.settingsDock = dock;
+                root.settingsOpen = true;
+            }
+
+            // ⚠️ Adopt the first dock as the one the settings panel drives.
+            // Without this, opening settings over IPC left `settingsDock` null,
+            // DockSettings' `required property var dock` could not be
+            // satisfied, and the window silently never appeared — no error
+            // anywhere, because LazyLoader simply had nothing to show.
+            Component.onCompleted: if (!root.settingsDock)
+                root.settingsDock = dock
+
             onUrlsDropped: (urls, index) => {
                 // Only folders are pinnable. A dropped file that landed on the
                 // background rather than on an app icon has no obvious meaning,
@@ -186,6 +211,35 @@ ShellRoot {
                 }
             }
             edge: cfg.edge === "left" ? Qt.LeftEdge : cfg.edge === "right" ? Qt.RightEdge : cfg.edge === "top" ? Qt.TopEdge : Qt.BottomEdge
+        }
+    }
+
+    // ── Settings ────────────────────────────────────────────────────────
+    //
+    // A plain window bound to `visible`. An earlier attempt wrapped this in a
+    // LazyLoader to avoid constructing it at startup; it produced no window, no
+    // error and no log line, and a settings panel that fails invisibly is far
+    // worse than one costing a few dozen items at login.
+    FloatingWindow {
+        id: settingsWin
+
+        visible: root.settingsOpen && root.settingsDock !== null
+        implicitWidth: 400
+        implicitHeight: 660
+        color: "#17171b"
+
+        DockSettings {
+            anchors.fill: parent
+            dock: root.settingsDock
+
+            onCommitted: (key, value) => {
+                // One generic writer rather than a handler per setting. The
+                // JsonAdapter's properties are addressable by name, so a switch
+                // statement here would be forty lines whose only possible
+                // future is drifting out of sync with the panel.
+                cfg[key] = value;
+                config.writeAdapter();
+            }
         }
     }
 }

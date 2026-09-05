@@ -47,6 +47,12 @@ Item {
     /*! Absolute path, for kind == "folder". */
     property string folder: ""
 
+    /*! An image path that replaces this app's icon. Empty uses the app's own.
+        A dock full of vendor artwork at six different visual weights is the
+        commonest reason people give up on Linux docks looking tidy, and the
+        only fix is letting them substitute one. */
+    property string iconOverride: ""
+
     readonly property bool isSeparator: root.kind === "separator"
 
     /*! Dragged far enough out of the dock that releasing will remove it.
@@ -165,7 +171,7 @@ Item {
             id: icon
             visible: false
             anchors.fill: parent
-            source: root.entry ? Quickshell.iconPath(root.entry.icon, "application-x-executable") : ""
+            source: root.iconOverride !== "" ? (root.iconOverride.startsWith("/") ? "file://" + root.iconOverride : root.iconOverride) : (root.entry ? Quickshell.iconPath(root.entry.icon, "application-x-executable") : "")
             implicitSize: Math.ceil(root.maxIconSize)
             smooth: true
         }

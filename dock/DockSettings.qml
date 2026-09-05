@@ -1,0 +1,453 @@
+pragma ComponentBehavior: Bound
+
+import QtQuick
+import Quickshell
+import Charis
+
+/*!
+    The dock's settings, built with Charis.
+
+    Every control here is a Squircle and a Spring, so the settings window is the
+    library's second customer after Studio. A toolkit whose own preferences
+    dialog has to be built with something else is not finished.
+
+    \section2 Live, not "Apply"
+
+    Every change takes effect on the dock immediately and is written to
+    `dock.json` on release. There is no OK/Cancel, because for visual settings
+    the preview IS the decision: nobody can choose a corner radius from a number,
+    and an Apply button turns every adjustment into a guess followed by a
+    round trip.
+
+    ⚠️ Written on RELEASE, not per frame. A slider dragged across its range
+    would otherwise write the config file a hundred times, and `FileView` is
+    watching that file — so each write would bounce straight back in as a
+    reload while the finger is still down.
+*/
+Item {
+    id: root
+
+    /*! The live Dock, so controls can drive it directly and the preview is the
+        real thing rather than a mock-up of it. */
+    required property var dock
+
+    /*! Called with (key, value) when a control settles. */
+    signal committed(string key, var value)
+
+    readonly property color bg: "#17171b"
+    readonly property color panel: "#1f1f25"
+    readonly property color line: "#2f2f38"
+    readonly property color text: "#e9e9ec"
+    readonly property color dim: "#8e8e99"
+    readonly property color accent: "#6f9ceb"
+
+    implicitWidth: 380
+    implicitHeight: 640
+
+    Rectangle {
+        anchors.fill: parent
+        color: root.bg
+    }
+
+    // ── Controls ────────────────────────────────────────────────────────
+
+    component Slider: Item {
+        id: sl
+        required property string label
+        required property real from
+        required property real to
+        property real value: 0
+        property int decimals: 0
+        property string settingKey: ""
+        signal settled(real v)
+
+        width: parent ? parent.width : 300
+        height: 44
+
+        readonly property real frac: (sl.value - sl.from) / Math.max(0.0001, sl.to - sl.from)
+
+        Text {
+            id: lbl
+            x: 0
+            y: 2
+            text: sl.label
+            color: root.dim
+            font.pixelSize: 11
+        }
+        Text {
+            anchors.right: parent.right
+            y: 2
+            text: sl.value.toFixed(sl.decimals)
+            color: root.text
+            font.pixelSize: 11
+            font.family: "monospace"
+        }
+
+        Item {
+            id: track
+            y: 22
+            width: parent.width
+            height: 18
+
+            Rectangle {
+                anchors.verticalCenter: parent.verticalCenter
+                width: parent.width
+                height: 4
+                radius: 2
+                color: root.line
+            }
+            Rectangle {
+                anchors.verticalCenter: parent.verticalCenter
+                width: parent.width * sl.frac
+                height: 4
+                radius: 2
+                color: root.accent
+            }
+
+            // The knob is spring-driven so it eases into place when the value
+            // is changed from elsewhere, and tracks the finger exactly while
+            // being dragged — the spring's whole reason for existing.
+            Spring {
+                id: knob
+                target: track.width * sl.frac
+                response: knobDrag.active ? 0.05 : 0.28
+                damping: 1.0
+                epsilon: 0.01
+            }
+
+            Rectangle {
+                x: knob.value - width / 2
+                anchors.verticalCenter: parent.verticalCenter
+                width: knobDrag.active || knobHover.hovered ? 16 : 13
+                height: width
+                radius: width / 2
+                color: "white"
+
+                Behavior on width {
+                    NumberAnimation {
+                        duration: 110
+                    }
+                }
+            }
+
+            HoverHandler {
+                id: knobHover
+            }
+            DragHandler {
+                id: knobDrag
+                target: null
+                xAxis.enabled: true
+                yAxis.enabled: false
+                dragThreshold: 0
+                onCentroidChanged: {
+                    if (!knobDrag.active)
+                        return;
+                    const f = Math.max(0, Math.min(1, knobDrag.centroid.position.x / track.width));
+                    sl.value = sl.from + f * (sl.to - sl.from);
+                }
+                onActiveChanged: if (!knobDrag.active)
+                    sl.settled(sl.value)
+            }
+            TapHandler {
+                onTapped: e => {
+                    const f = Math.max(0, Math.min(1, e.position.x / track.width));
+                    sl.value = sl.from + f * (sl.to - sl.from);
+                    sl.settled(sl.value);
+                }
+            }
+        }
+    }
+
+    component Toggle: Item {
+        id: tg
+        required property string label
+        property string hint: ""
+        property bool checked: false
+        signal settled(bool v)
+
+        width: parent ? parent.width : 300
+        height: tg.hint ? 44 : 32
+
+        Text {
+            y: 2
+            text: tg.label
+            color: root.text
+            font.pixelSize: 12.5 - 0.5
+        }
+        Text {
+            y: 20
+            visible: tg.hint !== ""
+            text: tg.hint
+            color: root.dim
+            font.pixelSize: 10
+            width: tg.width - 60
+            wrapMode: Text.Wrap
+        }
+
+        Item {
+            id: sw
+            anchors.right: parent.right
+            y: 2
+            width: 38
+            height: 21
+
+            Spring {
+                id: slide
+                target: tg.checked ? 1 : 0
+                response: 0.26
+                damping: 0.85
+            }
+
+            Squircle {
+                anchors.fill: parent
+                radius: 10.5
+                smoothing: 1
+                fillColor: Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.25 + 0.75 * slide.value)
+            }
+            Rectangle {
+                x: 2.5 + slide.value * 17
+                anchors.verticalCenter: parent.verticalCenter
+                width: 16
+                height: 16
+                radius: 8
+                color: "white"
+            }
+            TapHandler {
+                onTapped: {
+                    tg.checked = !tg.checked;
+                    tg.settled(tg.checked);
+                }
+            }
+        }
+    }
+
+    component Segmented: Item {
+        id: seg
+        required property string label
+        required property var options   // [[value, text], …]
+        property string value: ""
+        signal settled(string v)
+
+        width: parent ? parent.width : 300
+        height: 46
+
+        Text {
+            y: 2
+            text: seg.label
+            color: root.dim
+            font.pixelSize: 11
+        }
+
+        Row {
+            y: 20
+            spacing: 4
+
+            Repeater {
+                model: seg.options
+
+                Item {
+                    id: opt
+                    required property var modelData
+                    readonly property bool on: seg.value === opt.modelData[0]
+                    width: Math.max(60, txt.implicitWidth + 20)
+                    height: 24
+
+                    Squircle {
+                        anchors.fill: parent
+                        radius: 7
+                        smoothing: 1
+                        fillColor: opt.on ? root.accent : (optHover.hovered ? "#2b2b33" : "#232329")
+                    }
+                    Text {
+                        id: txt
+                        anchors.centerIn: parent
+                        text: opt.modelData[1]
+                        color: opt.on ? "#111" : root.text
+                        font.pixelSize: 11
+                        font.bold: opt.on
+                    }
+                    HoverHandler {
+                        id: optHover
+                    }
+                    TapHandler {
+                        onTapped: {
+                            seg.value = opt.modelData[0];
+                            seg.settled(seg.value);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    component Heading: Text {
+        color: root.dim
+        font.pixelSize: 10
+        font.bold: true
+        font.capitalization: Font.AllUppercase
+        topPadding: 10
+    }
+
+    // ── Layout ──────────────────────────────────────────────────────────
+    Flickable {
+        anchors.fill: parent
+        anchors.margins: 18
+        contentHeight: col.height + 20
+        clip: true
+
+        Column {
+            id: col
+            width: parent.width
+            spacing: 6
+
+            Text {
+                text: "Dock"
+                color: root.text
+                font.pixelSize: 19
+                font.bold: true
+                bottomPadding: 4
+            }
+
+            Heading {
+                text: "Size and position"
+            }
+
+            Segmented {
+                label: "Edge"
+                options: [["bottom", "Bottom"], ["left", "Left"], ["right", "Right"], ["top", "Top"]]
+                value: root.dock.edge === Qt.LeftEdge ? "left" : root.dock.edge === Qt.RightEdge ? "right" : root.dock.edge === Qt.TopEdge ? "top" : "bottom"
+                onSettled: v => root.committed("edge", v)
+            }
+
+            Slider {
+                label: "Icon size"
+                from: 24
+                to: 128
+                value: root.dock.baseIconSize
+                onValueChanged: root.dock.baseIconSize = value
+                onSettled: v => root.committed("iconSize", Math.round(v))
+            }
+
+            Slider {
+                label: "Magnification"
+                from: 1
+                to: 3
+                decimals: 2
+                value: root.dock.magnification
+                onValueChanged: root.dock.magnification = value
+                onSettled: v => root.committed("magnification", v)
+            }
+
+            Slider {
+                label: "Magnification reach (icons)"
+                from: 1
+                to: 6
+                decimals: 1
+                value: root.dock.influenceCells
+                onValueChanged: root.dock.influenceCells = value
+                onSettled: v => root.committed("influenceCells", v)
+            }
+
+            Slider {
+                label: "Icon spacing"
+                from: 0
+                to: 24
+                value: root.dock.spacing
+                onValueChanged: root.dock.spacing = value
+                onSettled: v => root.committed("spacing", Math.round(v))
+            }
+
+            Slider {
+                label: "Gap from screen edge"
+                from: 0
+                to: 40
+                value: root.dock.edgeGap
+                onValueChanged: root.dock.edgeGap = value
+                onSettled: v => root.committed("edgeGap", Math.round(v))
+            }
+
+            Heading {
+                text: "Appearance"
+            }
+
+            Slider {
+                label: "Background opacity"
+                from: 0
+                to: 1
+                decimals: 2
+                value: root.dock.panelOpacity
+                onValueChanged: root.dock.panelOpacity = value
+                onSettled: v => root.committed("panelOpacity", v)
+            }
+
+            Slider {
+                label: "Corner roundness"
+                from: 0
+                to: 0.5
+                decimals: 2
+                value: root.dock.cornerRoundness
+                onValueChanged: root.dock.cornerRoundness = value
+                onSettled: v => root.committed("cornerRoundness", v)
+            }
+
+            Slider {
+                label: "Border width"
+                from: 0
+                to: 4
+                value: root.dock.borderWidth
+                onValueChanged: root.dock.borderWidth = value
+                onSettled: v => root.committed("borderWidth", Math.round(v))
+            }
+
+            Toggle {
+                label: "Refracting glass"
+                hint: "Bends the wallpaper at the dock's rim instead of a flat tint. Costs a texture and a shader pass."
+                checked: root.dock.useGlass
+                onCheckedChanged: root.dock.useGlass = checked
+                onSettled: v => root.committed("useGlass", v)
+            }
+
+            Slider {
+                label: "Glass refraction"
+                from: 0
+                to: 40
+                value: root.dock.blurAmount
+                onValueChanged: root.dock.blurAmount = value
+                onSettled: v => root.committed("blurAmount", Math.round(v))
+            }
+
+            Heading {
+                text: "Behaviour"
+            }
+
+            Toggle {
+                label: "Hide automatically"
+                checked: root.dock.autoHide
+                onCheckedChanged: root.dock.autoHide = checked
+                onSettled: v => root.committed("autoHide", v)
+            }
+
+            Toggle {
+                label: "Animations"
+                hint: "Off makes every motion instant. Large sliding motion is genuinely unpleasant for some people."
+                checked: root.dock.animations
+                onCheckedChanged: root.dock.animations = checked
+                onSettled: v => root.committed("animations", v)
+            }
+
+            Toggle {
+                label: "Resize by dragging the edge"
+                checked: root.dock.resizable
+                onCheckedChanged: root.dock.resizable = checked
+                onSettled: v => root.committed("resizable", v)
+            }
+
+            Segmented {
+                label: "Folders open as"
+                options: [["grid", "Grid"], ["list", "List"], ["icons", "Icons"]]
+                value: root.dock.folderView
+                onSettled: v => root.committed("folderView", v)
+            }
+        }
+    }
+}

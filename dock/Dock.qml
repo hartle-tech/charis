@@ -95,6 +95,9 @@ PanelWindow {
     /*! How folder stacks display their contents: "grid", "list" or "icons". */
     property string folderView: "grid"
 
+    /*! `{ "<key>": "/path/to/image.png" }` — per-app icon replacements. */
+    property var iconOverrides: ({})
+
     readonly property real _resp: root.animations ? 1 : 0.0001
 
     /*!
@@ -422,6 +425,16 @@ PanelWindow {
         readonly property real thick: root.bandThickness
         readonly property real bandStart: content.thick - content.edgeGap - content.band
 
+        // Right-click anywhere on the dock that is not an icon opens settings.
+        // This is where people try first, long before they look for a menu
+        // entry, and a settings panel reachable only over IPC is one nobody
+        // finds.
+        TapHandler {
+            acceptedButtons: Qt.RightButton
+            gesturePolicy: TapHandler.ReleaseWithinBounds
+            onTapped: root.settingsRequested()
+        }
+
         Squircle {
             id: bg
 
@@ -545,6 +558,7 @@ PanelWindow {
                 folder: item.modelData.folder ?? ""
                 fallbackLabel: item.modelData.label ?? item.modelData.key
                 launching: root.launching[item.modelData.key] === true
+                iconOverride: root.iconOverrides[item.modelData.key] ?? ""
                 toplevels: item.modelData.toplevels
                 iconSize: root.layout.sizes[item.index] ?? root.baseIconSize
                 edge: root.edge
@@ -679,6 +693,9 @@ PanelWindow {
 
     /*! Emitted when the folder view mode is changed from a stack's menu. */
     signal folderViewRequested(string mode)
+
+    /*! Right-click on empty dock space. */
+    signal settingsRequested()
 
     /*! Add or remove `key` from the pinned list and publish the result. */
     /*! Emitted with the new folder list when a stack is added or removed.
