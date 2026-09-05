@@ -41,6 +41,12 @@ Item {
     /*! Change how folder stacks display their contents. */
     signal viewModeRequested(string mode)
 
+    /*! Open the dock's settings. Lives here because a bare right-click on the
+        dock background used to open them, and the gaps between icons are a few
+        pixels wide — so aiming at an icon and missing threw a settings window
+        across the screen constantly. */
+    signal settingsRequested()
+
     /*! Current mode, so the menu can tick the active one. */
     property string folderView: "grid"
     readonly property bool horizontal: root.edge === Qt.BottomEdge || root.edge === Qt.TopEdge
@@ -124,11 +130,19 @@ Item {
                 kind: "quit"
             });
 
+        out.push({
+            label: "Dock Settings…",
+            kind: "settings",
+            separated: true
+        });
+
         return out;
     }
 
     function invoke(item: var): void {
-        if (item.kind === "view")
+        if (item.kind === "settings")
+            root.settingsRequested();
+        else if (item.kind === "view")
             root.viewModeRequested(item.mode);
         else if (item.kind === "openFolder")
             Quickshell.execDetached(["xdg-open", root.app.folder]);

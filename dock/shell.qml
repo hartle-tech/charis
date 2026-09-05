@@ -12,6 +12,7 @@
 
 import Quickshell
 import Quickshell.Io
+import Quickshell.Wayland
 import Charis
 import QtQuick
 
@@ -73,6 +74,24 @@ ShellRoot {
             FrameBudget.recalibrate();
         }
 
+        /*! The configuration the dock is ACTUALLY using, as opposed to what is
+            on disk. The two diverging silently is exactly the class of bug this
+            exists to catch. */
+        function config(): string {
+            return JSON.stringify({
+                iconSize: cfg.iconSize,
+                magnification: cfg.magnification,
+                edgeGap: cfg.edgeGap,
+                autoHide: cfg.autoHide,
+                pinned: cfg.pinned,
+                loaded: root.configFileLoaded,
+                // What the DOCK believes, as opposed to what the config says.
+                // These diverging is the bug this readout exists to expose.
+                dockIconSize: root.settingsDock ? root.settingsDock.baseIconSize : -1,
+                dockEdgeGap: root.settingsDock ? root.settingsDock.edgeGap : -1
+            });
+        }
+
         /*! Open the settings window. Also reachable by right-clicking empty
             space on the dock — an IPC-only settings panel is one nobody finds. */
         function settings(): void {
@@ -94,6 +113,8 @@ ShellRoot {
     // Pinned apps, read from a plain JSON file so it can be edited by hand,
     // by a settings UI, or by the dock itself when icons are reordered —
     // without any of the three needing to know about the others.
+    property bool configFileLoaded: false
+
     FileView {
         id: config
         path: `${Quickshell.env("HOME")}/.config/charis/dock.json`
@@ -102,7 +123,15 @@ ShellRoot {
         // A missing config is the FIRST-RUN case, not an error. Falling over
         // here would mean the dock never appears on a fresh install, which is
         // the one moment it most needs to.
-        onLoadFailed: err => config.writeAdapter()
+        onLoaded: root.configFileLoaded = true
+        // ⚠️ Only seed on a genuinely MISSING file. `writeAdapter()` on any
+        // failure will happily write the adapter's DEFAULTS over a config that
+        // merely failed to parse this once — silently destroying the user's
+        // dock because of a transient read.
+        onLoadFailed: err => {
+            if (err === FileViewError.FileNotFound)
+                config.writeAdapter();
+        }
 
         // ⚠️ `adapter:`, NOT a bare child. FileView's default property is its
         // children, so `JsonAdapter { … }` written without this assignment is
@@ -192,6 +221,8 @@ ShellRoot {
                 config.writeAdapter();
             }
 
+            onIconSizeLive: size => cfg.iconSize = Math.round(size)
+
             onIconSizeRequested: size => {
                 cfg.iconSize = Math.round(size);
                 config.writeAdapter();
@@ -245,29 +276,55 @@ ShellRoot {
 
     // ── Settings ────────────────────────────────────────────────────────
     //
-    // A plain window bound to `visible`. An earlier attempt wrapped this in a
-    // LazyLoader to avoid constructing it at startup; it produced no window, no
-    // error and no log line, and a settings panel that fails invisibly is far
-    // worse than one costing a few dozen items at login.
-    FloatingWindow {
-        id: settingsWin
+    // 🔴 A LAYER-SHELL PANEL, NOT A FloatingWindow. As a window it was TILED by
+    // the compositor to 2708x1012 — on this 34" ultrawide a "0 to 100%" slider
+    // became two and a half feet long, which is absurd and which I should have
+    // seen without being told. A layer surface has exactly the size it asks
+    // for, on any wlroots compositor, and cannot be tiled.
+    LazyLoader {
+        active: root.settingsOpen && root.settingsDock !== null
 
-        visible: root.settingsOpen && root.settingsDock !== null
-        implicitWidth: 400
-        implicitHeight: 660
-        color: "#17171b"
+        PanelWindow {
+            id: settingsWin
 
-        DockSettings {
-            anchors.fill: parent
-            dock: root.settingsDock
+            WlrLayershell.layer: WlrLayer.Overlay
+            WlrLayershell.namespace: "charis-dock-settings"
+            WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
+            exclusionMode: ExclusionMode.Ignore
+            color: "transparent"
+            anchors { top: true; bottom: true; left: true; right: true }
 
-            onCommitted: (key, value) => {
-                // One generic writer rather than a handler per setting. The
-                // JsonAdapter's properties are addressable by name, so a switch
-                // statement here would be forty lines whose only possible
-                // future is drifting out of sync with the panel.
-                cfg[key] = value;
-                config.writeAdapter();
+            // Dismiss by clicking away from the panel.
+            MouseArea {
+                anchors.fill: parent
+                onClicked: root.settingsOpen = false
+            }
+
+            Rectangle {
+                anchors.centerIn: parent
+                width: 400
+                height: Math.min(720, parent.height - 80)
+                radius: 16
+                color: "#17171b"
+                border.color: "#2f2f38"
+                border.width: 1
+
+                // Swallow clicks so they do not reach the dismiss layer.
+                MouseArea {
+                    anchors.fill: parent
+                }
+
+                DockSettings {
+                    anchors.fill: parent
+                    anchors.margins: 2
+                    dock: root.settingsDock
+
+                    onChanged: (key, value) => cfg[key] = value
+                    onCommitted: (key, value) => {
+                        cfg[key] = value;
+                        config.writeAdapter();
+                    }
+                }
             }
         }
     }

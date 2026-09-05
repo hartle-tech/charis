@@ -31,7 +31,23 @@ Item {
         real thing rather than a mock-up of it. */
     required property var dock
 
-    /*! Called with (key, value) when a control settles. */
+    /*!
+        Emitted continuously while a control is moved. The caller sets the
+        config value, which flows back to the dock through its existing
+        binding — so the preview is live and the binding survives.
+
+        🔴 THE PANEL USED TO ASSIGN `dock.baseIconSize` DIRECTLY, AND THAT
+        BROKE THE DOCK PERMANENTLY. An imperative assignment in QML destroys
+        the property's binding, so the first time this window opened — the
+        sliders initialise, `onValueChanged` fires once, and every assignment
+        lands — the dock stopped following its config file for the rest of the
+        session. Measured: config said iconSize 64, the dock believed 48, and
+        nothing anywhere reported a problem. Data flows one way now: panel →
+        config → dock.
+    */
+    signal changed(string key, var value)
+
+    /*! Emitted on release, when the value should be persisted to disk. */
     signal committed(string key, var value)
 
     readonly property color bg: "#17171b"
@@ -316,7 +332,7 @@ Item {
                 label: "Edge"
                 options: [["bottom", "Bottom"], ["left", "Left"], ["right", "Right"], ["top", "Top"]]
                 value: root.dock.edge === Qt.LeftEdge ? "left" : root.dock.edge === Qt.RightEdge ? "right" : root.dock.edge === Qt.TopEdge ? "top" : "bottom"
-                onSettled: v => root.committed("edge", v)
+                onSettled: v => { root.changed("edge", v); root.committed("edge", v); }
             }
 
             Slider {
@@ -324,7 +340,7 @@ Item {
                 from: 24
                 to: 128
                 value: root.dock.baseIconSize
-                onValueChanged: root.dock.baseIconSize = value
+                onValueChanged: root.changed("iconSize", Math.round(value))
                 onSettled: v => root.committed("iconSize", Math.round(v))
             }
 
@@ -334,7 +350,7 @@ Item {
                 to: 3
                 decimals: 2
                 value: root.dock.magnification
-                onValueChanged: root.dock.magnification = value
+                onValueChanged: root.changed("magnification", value)
                 onSettled: v => root.committed("magnification", v)
             }
 
@@ -344,7 +360,7 @@ Item {
                 to: 6
                 decimals: 1
                 value: root.dock.influenceCells
-                onValueChanged: root.dock.influenceCells = value
+                onValueChanged: root.changed("influenceCells", value)
                 onSettled: v => root.committed("influenceCells", v)
             }
 
@@ -353,7 +369,7 @@ Item {
                 from: 0
                 to: 24
                 value: root.dock.spacing
-                onValueChanged: root.dock.spacing = value
+                onValueChanged: root.changed("spacing", Math.round(value))
                 onSettled: v => root.committed("spacing", Math.round(v))
             }
 
@@ -362,7 +378,7 @@ Item {
                 from: 0
                 to: 40
                 value: root.dock.edgeGap
-                onValueChanged: root.dock.edgeGap = value
+                onValueChanged: root.changed("edgeGap", Math.round(value))
                 onSettled: v => root.committed("edgeGap", Math.round(v))
             }
 
@@ -376,7 +392,7 @@ Item {
                 to: 1
                 decimals: 2
                 value: root.dock.panelOpacity
-                onValueChanged: root.dock.panelOpacity = value
+                onValueChanged: root.changed("panelOpacity", value)
                 onSettled: v => root.committed("panelOpacity", v)
             }
 
@@ -386,7 +402,7 @@ Item {
                 to: 0.5
                 decimals: 2
                 value: root.dock.cornerRoundness
-                onValueChanged: root.dock.cornerRoundness = value
+                onValueChanged: root.changed("cornerRoundness", value)
                 onSettled: v => root.committed("cornerRoundness", v)
             }
 
@@ -395,7 +411,7 @@ Item {
                 from: 0
                 to: 4
                 value: root.dock.borderWidth
-                onValueChanged: root.dock.borderWidth = value
+                onValueChanged: root.changed("borderWidth", Math.round(value))
                 onSettled: v => root.committed("borderWidth", Math.round(v))
             }
 
@@ -403,7 +419,7 @@ Item {
                 label: "Refracting glass"
                 hint: "Bends the wallpaper at the dock's rim instead of a flat tint. Costs a texture and a shader pass."
                 checked: root.dock.useGlass
-                onCheckedChanged: root.dock.useGlass = checked
+                onCheckedChanged: root.changed("useGlass", checked)
                 onSettled: v => root.committed("useGlass", v)
             }
 
@@ -412,7 +428,7 @@ Item {
                 from: 0
                 to: 40
                 value: root.dock.blurAmount
-                onValueChanged: root.dock.blurAmount = value
+                onValueChanged: root.changed("blurAmount", Math.round(value))
                 onSettled: v => root.committed("blurAmount", Math.round(v))
             }
 
@@ -423,7 +439,7 @@ Item {
             Toggle {
                 label: "Hide automatically"
                 checked: root.dock.autoHide
-                onCheckedChanged: root.dock.autoHide = checked
+                onCheckedChanged: root.changed("autoHide", checked)
                 onSettled: v => root.committed("autoHide", v)
             }
 
@@ -431,14 +447,14 @@ Item {
                 label: "Animations"
                 hint: "Off makes every motion instant. Large sliding motion is genuinely unpleasant for some people."
                 checked: root.dock.animations
-                onCheckedChanged: root.dock.animations = checked
+                onCheckedChanged: root.changed("animations", checked)
                 onSettled: v => root.committed("animations", v)
             }
 
             Toggle {
                 label: "Resize by dragging the edge"
                 checked: root.dock.resizable
-                onCheckedChanged: root.dock.resizable = checked
+                onCheckedChanged: root.changed("resizable", checked)
                 onSettled: v => root.committed("resizable", v)
             }
 
@@ -446,7 +462,7 @@ Item {
                 label: "Folders open as"
                 options: [["grid", "Grid"], ["list", "List"], ["icons", "Icons"]]
                 value: root.dock.folderView
-                onSettled: v => root.committed("folderView", v)
+                onSettled: v => { root.changed("folderView", v); root.committed("folderView", v); }
             }
         }
     }

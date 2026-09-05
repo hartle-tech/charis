@@ -196,7 +196,14 @@ PanelWindow {
         // as on macOS. The separator is a real row entry rather than a drawn
         // decoration so it participates in the magnification and shifts with
         // the icons instead of sitting still while they move around it.
-        if (root.folders.length > 0) {
+        //
+        // ⚠️ ALWAYS PRESENT, even with no folders pinned. It is not only a
+        // divider — it is the dock's resize handle, which is where macOS puts
+        // it and where people reach for it. Showing it only when a folder
+        // happens to be pinned means the handle appears and disappears with an
+        // unrelated setting, and a resize gesture that is sometimes impossible
+        // is worse than one that is merely hidden.
+        {
             out.push({
                 kind: "separator",
                 toplevels: [],
@@ -253,8 +260,11 @@ PanelWindow {
         // Short and critically damped: magnification must feel like it is
         // attached to the pointer, not chasing it. Anything slower than ~0.12s
         // reads as lag rather than as smoothing.
-        response: 0.12 * root._resp
-        damping: 1.0
+        // Magnification tracks the pointer closely but is not glued to it:
+        // a touch of lag and a touch of overshoot is what reads as MASS. Dead
+        // critical damping at 0.12s feels like a cursor-follower, not an object.
+        response: 0.14 * root._resp
+        damping: 0.86
         epsilon: 0.25
     }
 
@@ -272,8 +282,10 @@ PanelWindow {
         // 1 = fully out, 0 = tucked away. Slightly under-damped so the dock
         // arrives with a hint of settle instead of stopping dead.
         target: (!root.autoHide || hover.hovered || root.debugging) ? 1 : 0
-        response: 0.42 * root._resp
-        damping: 0.82
+        // Slower and softer than a menu: the dock is a large, heavy object and
+        // should arrive like one. Caelestia's own panels sit near 0.38s.
+        response: 0.46 * root._resp
+        damping: 0.78
     }
 
     MagnifiedRow {
@@ -331,8 +343,10 @@ PanelWindow {
     // 500px-tall surface across the bottom of the screen would swallow every
     // click in the lower third of the desktop, which is a far worse bug than
     // the one being fixed.
-    /*! Distance between the screen edge and the dock. 0 sits flush. */
-    property real edgeGap: 8
+    /*! Distance between the screen edge and the dock. 0 sits flush, which is
+        the default because macOS's dock touches the edge and a floating strip
+        with a gap under it is the look of a third-party imitation. */
+    property real edgeGap: 0
 
     /*! Padding between the icons and the dock's background edge. */
     readonly property real bgPad: root.spacing * 1.5
@@ -378,7 +392,20 @@ PanelWindow {
         desktop moves. */
     readonly property real tearZone: 240
 
-    readonly property real liveExtent: root.bandThickness + Math.max(stack.popupExtent, menu.popupExtent, drag.active ? root.tearZone : 0)
+    /*! How close to the screen edge the pointer must come to reveal a hidden
+        dock. 4px, i.e. essentially touching it.
+
+        🔴 THE WHOLE SURFACE USED TO BE THE TRIGGER. The surface is as tall as a
+        fully magnified icon, so a hidden dock sprang out whenever the pointer
+        came within ~140px of the bottom of the screen — which, on a display
+        this size, is most of the way across a window. macOS requires the
+        pointer to actually reach the edge. */
+    readonly property real revealStrip: 4
+
+    /*! Fully tucked away: nothing but the trigger strip should accept input. */
+    readonly property bool tuckedAway: root.autoHide && !root.debugging && reveal.value < 0.02
+
+    readonly property real liveExtent: root.tuckedAway ? root.revealStrip : root.bandThickness + Math.max(stack.popupExtent, menu.popupExtent, drag.active ? root.tearZone : 0)
 
     implicitHeight: root.horizontal ? root.liveExtent : 0
     implicitWidth: root.horizontal ? 0 : root.liveExtent
@@ -448,14 +475,19 @@ PanelWindow {
         readonly property real thick: root.bandThickness
         readonly property real bandStart: content.thick - content.edgeGap - content.band
 
-        // Right-click anywhere on the dock that is not an icon opens settings.
-        // This is where people try first, long before they look for a menu
-        // entry, and a settings panel reachable only over IPC is one nobody
-        // finds.
+        // 🔴 A BARE RIGHT-CLICK USED TO OPEN SETTINGS AND IT WAS INTOLERABLE.
+        // The gaps between icons are a few pixels wide, so aiming at an icon
+        // and missing — which happens constantly — threw a settings window
+        // across the screen. Settings now live in the icon menu, where a
+        // right-click is already deliberate, and behind a modifier here for
+        // people who want the shortcut.
         TapHandler {
             acceptedButtons: Qt.RightButton
             gesturePolicy: TapHandler.ReleaseWithinBounds
-            onTapped: root.settingsRequested()
+            onTapped: e => {
+                if (e.modifiers & Qt.ControlModifier)
+                    root.settingsRequested();
+            }
         }
 
         Squircle {
@@ -474,6 +506,72 @@ PanelWindow {
             strokeWidth: root.borderWidth
             opacity: reveal.value
             visible: !glassBg.visible
+        }
+
+        // ── The glass edge ──────────────────────────────────────────────
+        //
+        // Compositor blur alone is FROSTING, not glass — it is what every
+        // Linux panel has had for a decade and it reads as flat because a real
+        // sheet of glass is defined by its EDGE: a bright specular line where
+        // the light catches the top bevel, and a darker one underneath where it
+        // does not. Two hairlines are most of the difference between "a
+        // translucent rectangle" and "an object lying on top of the desktop",
+        // and they cost two rectangles.
+        Item {
+            id: glassEdge
+            x: bg.x
+            y: bg.y
+            width: bg.width
+            height: bg.height
+            opacity: reveal.value * (root.useGlass || root.blurAmount > 0 ? 1 : 0)
+            visible: opacity > 0.01
+
+            // Top bevel: brightest in the middle, fading at the corners, the
+            // way a curved edge catches light.
+            Rectangle {
+                x: parent.width * 0.06
+                y: 1
+                width: parent.width * 0.88
+                height: 1
+                gradient: Gradient {
+                    orientation: Gradient.Horizontal
+                    GradientStop {
+                        position: 0
+                        color: "transparent"
+                    }
+                    GradientStop {
+                        position: 0.5
+                        color: Qt.rgba(1, 1, 1, 0.30)
+                    }
+                    GradientStop {
+                        position: 1
+                        color: "transparent"
+                    }
+                }
+            }
+
+            // Bottom shadow line — the underside of the same bevel.
+            Rectangle {
+                x: parent.width * 0.06
+                y: parent.height - 1
+                width: parent.width * 0.88
+                height: 1
+                gradient: Gradient {
+                    orientation: Gradient.Horizontal
+                    GradientStop {
+                        position: 0
+                        color: "transparent"
+                    }
+                    GradientStop {
+                        position: 0.5
+                        color: Qt.rgba(0, 0, 0, 0.28)
+                    }
+                    GradientStop {
+                        position: 1
+                        color: "transparent"
+                    }
+                }
+            }
         }
 
         // The refracting background. Off by default: it needs a backdrop item
@@ -561,7 +659,11 @@ PanelWindow {
                     // the pointer.
                     const d = root.horizontal ? -(gripDrag.centroid.position.y - gripDrag.centroid.pressPosition.y) : (gripDrag.centroid.position.x - gripDrag.centroid.pressPosition.x);
                     const dir = (root.edge === Qt.BottomEdge || root.edge === Qt.RightEdge) ? 1 : -1;
-                    root.baseIconSize = Math.max(24, Math.min(128, grip.startSize + d * dir));
+                    // Emitted, not assigned. Assigning root.baseIconSize here
+                    // would destroy its binding to the config exactly as the
+                    // settings panel used to, and the dock would stop
+                    // following its own config file after one drag.
+                    root.iconSizeLive(Math.max(24, Math.min(128, grip.startSize + d * dir)));
                 }
             }
         }
@@ -652,8 +754,40 @@ PanelWindow {
                         drag.toIndex = root.indexNear(axisPos);
                 }
                 onDragEnded: drag.commit()
+
+                // The separator resizes the dock, exactly as it does on macOS.
+                onSeparatorPressed: {
+                    sepResize.start = root.baseIconSize;
+                    sepResize.startEdgeDist = -1;
+                }
+
+                onSeparatorMoved: (sceneY, sceneX) => {
+                    // Distance from the screen edge the dock is anchored to.
+                    // That edge does not move when the surface resizes, so this
+                    // is the one measure the gesture cannot contaminate.
+                    const d = root.horizontal ? (root.edge === Qt.BottomEdge ? root.height - sceneY : sceneY) : (root.edge === Qt.RightEdge ? root.width - sceneX : sceneX);
+                    if (sepResize.startEdgeDist < 0) {
+                        sepResize.startEdgeDist = d;
+                        return;
+                    }
+                    root.iconSizeLive(Math.max(24, Math.min(128, sepResize.start + (d - sepResize.startEdgeDist))));
+                }
+
+                onSeparatorReleased: {
+                    root.iconSizeRequested(root.baseIconSize);
+                    sepResize.start = 0;
+                }
             }
         }
+    }
+
+    QtObject {
+        id: sepResize
+        // The size the dock had when this drag began. Measuring each frame
+        // against the LIVE size instead makes the gesture compound with itself
+        // and the dock runs away from the pointer.
+        property real start: 0
+        property real startEdgeDist: -1
     }
 
     // ── Reordering ──────────────────────────────────────────────────────
@@ -713,6 +847,9 @@ PanelWindow {
         Emitted on RELEASE rather than continuously: writing a config file on
         every frame of a drag is a hundred writes for one decision. */
     signal iconSizeRequested(real size)
+
+    /*! Emitted continuously while the resize grip is dragged. */
+    signal iconSizeLive(real size)
 
     /*! Emitted when the folder view mode is changed from a stack's menu. */
     signal folderViewRequested(string mode)
@@ -868,6 +1005,7 @@ PanelWindow {
         edge: root.edge
         onPinRequested: (key, pinned) => root.setPinned(key, pinned)
         onViewModeRequested: mode => root.folderViewRequested(mode)
+        onSettingsRequested: root.settingsRequested()
         folderView: root.folderView
         anchors.fill: parent
         bandOffset: root.bandThickness
