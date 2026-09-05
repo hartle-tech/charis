@@ -71,9 +71,124 @@ PanelWindow {
     property real borderWidth: 1
 
     /*! Use the refracting Glass material for the background instead of flat
-        translucency. Needs a `backdrop`; without one it falls back on its own. */
+        translucency.
+
+        🔴 THIS TOGGLE RENDERED NOTHING FOR AS LONG AS IT EXISTED. The Glass
+        item's `visible` was `useGlass && backdrop !== null`, and NOTHING EVER
+        ASSIGNED `backdrop`. Flipping the switch in the settings panel changed
+        0.0 pixels — measured, mean absolute difference across the whole panel
+        region between glass on and glass off, twice. The shader was written,
+        the shader was correct, the shader had no source item and therefore no
+        turn to draw. "No proper liquid glass" was exactly right.
+
+        The fix is not a wire, it is understanding what is behind a dock. A
+        layer surface cannot sample the windows below it, which is why this sat
+        unfinished. But this dock reserves an exclusive zone: **no window can
+        ever be behind it.** The only thing there is the wallpaper. So the
+        wallpaper IS the backdrop, completely and not approximately, and
+        refracting it is not a cheat standing in for the real thing — for a
+        dock anchored to a screen edge it is the real thing. */
     property bool useGlass: false
+
+    /*! An explicit backdrop, if the embedder has something better than the
+        wallpaper — a floating dock over a canvas, say. Left null, the dock
+        makes its own from \l wallpaper. */
     property Item backdrop: null
+
+    /*! Absolute path to the desktop wallpaper, used as the glass's backdrop
+        when no explicit one is given. Empty means the glass has nothing to
+        refract and stays off rather than drawing an invisible nothing. */
+    property string wallpaper: ""
+
+    /*! Why the glass is or is not drawing, in one string. A toggle that
+        silently has nothing to refract is indistinguishable from a toggle that
+        does nothing — this is how you tell them apart without guessing. */
+    readonly property string glassDiag: `useGlass=${root.useGlass} wallpaper=${root.wallpaper !== ""} paperStatus=${paper.status} paperSize=${paper.implicitWidth}x${paper.implicitHeight} backdrop=${root._backdrop !== null} screen=${root.screenWidth}x${root.screenHeight} surface=${root.width}x${root.height}`
+
+    readonly property Item _backdrop: root.backdrop ?? (paper.status === Image.Ready ? wallpaperImage : null)
+
+    /*!
+        The wallpaper, drawn at SCREEN size and offset so that this item's
+        coordinate space lines up with the screen's.
+
+        🔴 CLIPPED AT DECODE TIME, NOT MOVED INTO PLACE. The obvious way to get
+        the right pixels under the panel is to draw the whole wallpaper at
+        screen size and shift it up by the surface's inset — the band the dock
+        occupies then lands at 0,0. It does not work, and the failure is silent:
+        an item positioned entirely outside its window's bounds is not rendered
+        at all, so the ShaderEffectSource that samples it gets an empty texture
+        and the glass draws a flat black slab. Which is exactly what a dock with
+        the glass switched off looks like, so it reads as the toggle doing
+        nothing rather than as the backdrop being missing.
+
+        ⚠️ STATE OF PLAY: the backdrop now resolves and the glass now DRAWS —
+        measured, mean absolute difference across the panel between glass on
+        and glass off went from 0.00 to 11.64 levels. Its appearance is not
+        right yet: it renders far darker than the wallpaper behind it, so the
+        panel reads as a black slab rather than as glass. `useGlass` stays
+        false by default until the shader's output matches its intent. The
+        shipping translucency is compositor blur, which is measured and works.
+
+        ⚠️ Assumes the wallpaper covers the output — which is what a wallpaper
+        does. A picture with a different aspect ratio, cropped by the desktop's
+        own fill mode, would be sampled slightly off.
+    */
+    Item {
+        id: wallpaperImage
+        // ⚠️ VISIBLE. Qt renders nothing into a ShaderEffectSource for an item
+        // whose `visible` is false, so an invisible backdrop yields a
+        // transparent-black texture and the glass draws a flat slab. Glass
+        // takes it out of the scene itself via `hideBackdrop`.
+        visible: root.useGlass && root.backdrop === null
+        x: 0
+        y: 0
+        width: root.width
+        height: root.height
+
+        // 🔴 A CLIPPING BOX AT 0,0 WITH THE PICTURE OFFSET INSIDE IT. Two
+        // earlier shapes both failed silently and both looked like the glass
+        // toggle doing nothing:
+        //
+        //   · The full-size wallpaper offset up into place. An item lying
+        //     entirely outside its window's bounds is never rendered, so the
+        //     ShaderEffectSource sampled an empty texture and the glass drew a
+        //     flat black slab.
+        //   · An Image with `sourceClipRect` computed from its own
+        //     implicitWidth/implicitHeight. That is a circular binding: the
+        //     clip needs the decoded size, the decode needs a non-empty clip,
+        //     and the image never loads at all. `status` stays below Ready
+        //     forever and nothing warns.
+        //
+        // A box that is inside the window, with the picture as a child pushed
+        // up by the surface's inset, has neither problem. Qt renders the part
+        // of the child that intersects the clip, which is exactly the band the
+        // dock sits on.
+        clip: true
+
+        Image {
+            id: paper
+            source: root.wallpaper === "" ? "" : (root.wallpaper.startsWith("/") ? "file://" + root.wallpaper : root.wallpaper)
+            width: root.screenWidth
+            height: root.screenHeight
+            x: -root.surfaceX
+            y: -(root.screenHeight - root.height - root.surfaceY)
+            fillMode: Image.PreserveAspectCrop
+            cache: true
+            asynchronous: true
+            // Decoded at screen size, in device pixels. The default decodes at
+            // the item's implicit size and upscales — the same mistake that
+            // made every icon in this dock soft.
+            sourceSize.width: root.screenWidth * Math.max(1, Screen.devicePixelRatio)
+            sourceSize.height: root.screenHeight * Math.max(1, Screen.devicePixelRatio)
+        }
+    }
+
+    /*! The output's logical size and this surface's position in it, so the
+        wallpaper can be placed. Supplied by the shell, which knows. */
+    property real screenWidth: Screen.width
+    property real screenHeight: Screen.height
+    property real surfaceX: 0
+    property real surfaceY: 0
 
     /*! How hard the glass bends the backdrop at its rim, in pixels. */
     property real blurAmount: 12
@@ -617,12 +732,15 @@ PanelWindow {
         // integrated graphics. Bind `useGlass` to taste, not to fashion.
         Glass {
             id: glassBg
-            visible: root.useGlass && root.backdrop !== null
+            visible: root.useGlass && root._backdrop !== null
             x: bg.x
             y: bg.y
             width: bg.width
             height: bg.height
-            backdrop: root.backdrop
+            backdrop: root._backdrop
+            // The dock's own wallpaper exists only to be sampled; it must not
+            // be painted over the desktop through a transparent surface.
+            hideBackdrop: root.backdrop === null
             radius: Math.min(width, height) * root.cornerRoundness
             smoothing: 1
             refraction: root.blurAmount

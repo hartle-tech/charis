@@ -55,6 +55,14 @@ Item {
     /*! The item to refract. Nothing renders without one. */
     property Item backdrop: null
 
+    /*! Take the backdrop out of the scene once it has been sampled.
+
+        True when the backdrop exists only to be refracted — a wallpaper an
+        overlay draws for itself, which must not also be painted over the
+        desktop. False when it is a real background that has to keep showing
+        through and around the glass. */
+    property bool hideBackdrop: false
+
     /*! Corner radius, matching \l Squircle. */
     property real radius: 24
 
@@ -90,7 +98,21 @@ Item {
         anchors.fill: parent
         visible: false
         live: root.enabled && root.visible
-        hideSource: false
+        // 🔴 THE BACKDROP MUST BE A VISIBLE ITEM, AND THIS IS WHY.
+        //
+        // Qt Quick does not render an item whose `visible` is false into a
+        // ShaderEffectSource's texture — it renders nothing, and the shader
+        // samples transparent black. A dock whose glass was fed an invisible
+        // wallpaper drew a flat black slab and looked, exactly, like an opaque
+        // panel with the glass switched off.
+        //
+        // `hideSource` is the documented way out: the source item is visible,
+        // so it renders into the texture, and Qt then omits it from the scene
+        // so it is not also painted on top of everything. Set it when the
+        // backdrop exists ONLY to be sampled — a wallpaper the dock draws for
+        // itself — and leave it false when the caller's backdrop is a real
+        // background that must keep showing.
+        hideSource: root.hideBackdrop
         sourceItem: root.backdrop
         // Sample exactly the region this panel covers, in the backdrop's own
         // coordinates. Without this the shader samples the whole backdrop

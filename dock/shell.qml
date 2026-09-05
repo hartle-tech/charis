@@ -155,6 +155,13 @@ ShellRoot {
                 autoHide: cfg.autoHide,
                 pinned: cfg.pinned,
                 loaded: root.configFileLoaded,
+                // The glass's backdrop, and whether it resolved. A toggle that
+                // silently has nothing to refract is indistinguishable from a
+                // toggle that does nothing, which is what it was.
+                wallpaperFrom: cfg.wallpaperFrom,
+                wallpaper: root.livePaper,
+                useGlass: cfg.useGlass,
+                glassReady: root.settingsDock ? root.settingsDock.glassDiag : "no dock",
                 // What the DOCK believes, as opposed to what the config says.
                 // These diverging is the bug this readout exists to expose.
                 dockIconSize: root.settingsDock ? root.settingsDock.baseIconSize : -1,
@@ -178,6 +185,24 @@ ShellRoot {
         function magnifyAt(x: real): void {
             root.magnifyOverride = x;
         }
+    }
+
+    /*! The wallpaper the glass refracts: the explicit path when one is given,
+        otherwise whatever `wallpaperFrom` currently names. */
+    readonly property string livePaper: cfg.wallpaper !== "" ? cfg.wallpaper : root.paperFromFile
+
+    property string paperFromFile: ""
+
+    FileView {
+        // ⚠️ `watchChanges` plus an explicit reload. FileView does not re-read
+        // on its own, and a wallpaper that rotates every ten minutes would
+        // otherwise be sampled once at startup and then be wrong for the rest
+        // of the session — with the glass looking subtly, unexplainably off.
+        path: cfg.wallpaperFrom
+        watchChanges: cfg.wallpaperFrom !== ""
+        onFileChanged: reload()
+        onLoaded: root.paperFromFile = text().trim()
+        onLoadFailed: root.paperFromFile = ""
     }
 
     // Pinned apps, read from a plain JSON file so it can be edited by hand,
@@ -273,6 +298,27 @@ ShellRoot {
             property real edgeGap: 8
             property real spacing: 8
             property real cornerRoundness: 0.28
+            /*! The desktop wallpaper, for the refracting glass to bend.
+
+                A dock with an exclusive zone has nothing but the wallpaper
+                behind it — no window can be there — so this is the complete
+                backdrop, not an approximation of one. Empty leaves the glass
+                off rather than drawing an invisible nothing, which is what it
+                did for its whole existence before this. */
+            property string wallpaper: ""
+
+            /*! A file whose CONTENTS is the wallpaper's path, watched for
+                changes.
+
+                ⚠️ THE WALLPAPER MOVES. On this desktop it rotates per virtual
+                desktop and the current one is written to a state file — a
+                static path in the config would refract yesterday's picture
+                within the hour, which is worse than no glass because it looks
+                like a rendering bug. Any desktop that can write its current
+                wallpaper to a file can drive this; nothing here knows or cares
+                which desktop that is. */
+            property string wallpaperFrom: ""
+
             property string panelColor: "#1e1e1e"
             property real panelOpacity: 0.55
             property string borderColor: "#1affffff"
@@ -337,6 +383,15 @@ ShellRoot {
             influenceCells: cfg.influenceCells
             useGlass: cfg.useGlass
             blurAmount: cfg.blurAmount
+            wallpaper: root.livePaper
+
+            // Where this surface sits on its output, so the wallpaper the
+            // glass refracts can be positioned to line up with the real one
+            // rather than starting at the surface's own top-left.
+            screenWidth: dock.screen ? dock.screen.width : Screen.width
+            screenHeight: dock.screen ? dock.screen.height : Screen.height
+            surfaceX: 0
+            surfaceY: 0
             animations: cfg.animations
             resizable: cfg.resizable
             folderView: cfg.folderView
