@@ -28,6 +28,14 @@ Item {
     /*! Icon edge length in px, driven by the parent's magnification. */
     required property real iconSize
 
+    /*! The icon size at REST, before any magnification.
+
+        Needed by anything that must stay inside the dock's background: the
+        background keeps its resting thickness while icons grow out of it, so a
+        divider measured against the magnified item box grows straight through
+        the top of the panel. */
+    required property real restIconSize
+
     /*! The largest \l iconSize will ever be. The icon's backing store is
         requested at THIS size and never at the current one: binding the
         decode size to a magnifying value re-decodes the icon on almost every
@@ -195,37 +203,47 @@ Item {
 
     // ── Launch bounce ───────────────────────────────────────────────────
     //
-    // A bounce IS a spring with an impulse, so this is the library's own
-    // primitive rather than a bespoke animation: give it velocity and let the
-    // physics do the arc. Under-damped, so it oscillates instead of gliding
-    // back, which is what makes it read as bouncing.
+    // 🔴 THIS WAS A SPRING CLAMPED TO ITS UPWARD HALF, AND THAT IS WHY THE
+    // ANIMATION LOOKED SQUARE. A spring oscillates symmetrically about its
+    // target; `Math.max(0, -spring.value)` throws away the downward half, so
+    // the icon sat motionless on the floor for half of every cycle and then
+    // left abruptly — no acceleration into the floor, no deceleration out of
+    // it, a flat bottom with a corner at each end. Reported as "all squared,
+    // no easing at all", which is an exact description of a clipped sine.
     //
-    // The value is clamped to the upward half. An unclamped oscillator swings
-    // symmetrically and the icon would sink THROUGH the dock floor on every
-    // other half-cycle; macOS's icon hops and lands, it never dips.
-    Spring {
+    // A hop is ballistic, not harmonic. Hop integrates gravity, so the icon
+    // leaves fast, rounds off into its apex, accelerates back down and loses
+    // energy on each contact — which is the whole of what makes a moving thing
+    // read as having mass.
+    Hop {
         id: bounce
-        // Slower and looser than a UI transition. macOS's launch bounce is a
-        // lazy half-second arc, and at 0.34s the hop is over before the eye
-        // registers it as a hop rather than a flicker.
-        response: 0.52
-        damping: 0.22
-        epsilon: 0.05
+        // Heavy enough to fall convincingly on a display this size. At 2600
+        // px/s² a one-icon hop takes about 0.42s up and down, which is close to
+        // macOS and comfortably slower than a UI transition.
+        gravity: 2600
+        // A little over half the speed kept per contact: three visible hops of
+        // decreasing height per impulse, then rest.
+        restitution: 0.55
     }
 
     Timer {
         id: bouncer
-        interval: 620
+        // One full hop is about 0.86s at this gravity — 0.41s for the first
+        // arc and three decaying ones after it. 620ms re-launched the icon
+        // mid-decay and the bounces ran into each other; a beat of rest is
+        // what makes it read as a repeating hop rather than as jitter.
+        interval: 1100
         repeat: true
         running: root.launching
         triggeredOnStart: true
-        // Sized to the ICON, not a fixed pixel count. An impulse of v lifts a
-        // spring by roughly v/ω, and ω = 2π/0.52 ≈ 12.1 — so a hop about one
-        // icon tall needs an impulse near 12.1 × iconSize. The first version
-        // used a flat -240, which lifts a 52px icon by thirteen pixels: present
-        // in the code, invisible on the screen, and exactly the kind of "it is
-        // implemented" that is worth nothing.
-        onTriggered: bounce.impulse(-12.1 * root.iconSize)
+        // Stated as a HEIGHT, not as an impulse. The apex of a ballistic hop
+        // is v²/2g, so "one icon tall" and "720 px/s" are only the same at one
+        // gravity — and an impulse expressed in spring units meant nothing at
+        // all to read. An earlier version used a flat -240 impulse, which
+        // lifted a 52px icon by thirteen pixels: present in the code, invisible
+        // on the screen, and exactly the kind of "it is implemented" that is
+        // worth nothing.
+        onTriggered: bounce.launchToHeight(root.iconSize * 1.05)
     }
 
     // Stop bouncing whether or not the app ever appeared. An app that fails to
@@ -252,7 +270,7 @@ Item {
         Component.onCompleted: tearFade.reset(1)
     }
 
-    readonly property real _lift: Math.max(0, -bounce.value) + tearLift.value
+    readonly property real _lift: bounce.value + tearLift.value
 
     // The dragged icon's displacement. Very fast while held — it must feel
     // glued to the pointer — and slower on release so it eases home.
@@ -313,12 +331,23 @@ Item {
         // A separator is a row entry like any other, so it magnifies and
         // shifts with its neighbours instead of standing still while they
         // move around it. It is also the dock's RESIZE HANDLE, as on macOS.
+        // 🔴 SIZED AGAINST THE PANEL, NOT AGAINST THE ICON BOX. The separator is
+        // a row item like any other, so its box MAGNIFIES on hover — and the
+        // divider was a fraction of that box. Hovering it grew the line to
+        // 0.78 × the magnified size, which on a 52px icon at 1.9× is 77px
+        // against a 76px panel: the line reached out of the top of the dock and
+        // hung over the desktop. The dock's background stays at its resting
+        // thickness while icons grow out of it, so anything that must stay
+        // INSIDE the background has to be measured against the background.
         Rectangle {
             id: sep
             visible: root.isSeparator
-            anchors.centerIn: parent
+            anchors.horizontalCenter: parent.horizontalCenter
+            // Centred on the panel's band rather than on the item, which grows
+            // upward past it.
+            y: parent.height - root.restIconSize / 2 - height / 2
             width: sepHover.hovered || sepDrag.active ? 2 : 1
-            height: parent.height * (sepHover.hovered || sepDrag.active ? 0.78 : 0.62)
+            height: root.restIconSize * (sepHover.hovered || sepDrag.active ? 0.72 : 0.58)
             radius: 1
             color: Qt.rgba(1, 1, 1, sepHover.hovered || sepDrag.active ? 0.55 : 0.22)
 

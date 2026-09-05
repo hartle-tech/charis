@@ -450,7 +450,24 @@ PanelWindow {
     // like any other floating panel; it does not claim space, so windows do
     // not move at all.
     exclusionMode: root.autoHide ? ExclusionMode.Ignore : ExclusionMode.Normal
-    exclusiveZone: root.autoHide ? 0 : Math.round(root.restExtent)
+
+    /*! The reservation, LATCHED while the dock is being resized.
+
+        🔴 EVERY FRAME OF A RESIZE DRAG USED TO RESERVE A DIFFERENT AMOUNT.
+        `restExtent` is derived from `baseIconSize`, the drag changes that
+        continuously, and each change asks the compositor to re-reserve space —
+        which re-lays-out every tiled window on the output. The dock stuttered,
+        and so did the window above it, while the operator was doing nothing
+        but dragging the dock's own edge. A dock resize is not a request to
+        reflow the desktop sixty times.
+
+        The reservation follows the dock everywhere else; during the gesture it
+        holds still and catches up on release. */
+    property real _latchedExtent: root.restExtent
+    exclusiveZone: root.autoHide ? 0 : Math.round(root._latchedExtent)
+
+    onRestExtentChanged: if (!gripDrag.active)
+        root._latchedExtent = root.restExtent
 
     anchors {
         bottom: root.edge === Qt.BottomEdge
@@ -537,8 +554,25 @@ PanelWindow {
         Measured: nothing at y=1143/1146/1151, revealed at y=1137. */
     readonly property real revealStrip: 16
 
-    /*! Fully tucked away: nothing but the trigger strip should accept input. */
-    readonly property bool tuckedAway: root.autoHide && !root.debugging && reveal.value < 0.02
+    /*!
+        Fully tucked away: nothing but the trigger strip should accept input.
+
+        🔴 THE MASK USED TO RETRACT OUT FROM UNDER THE POINTER. This was
+        `reveal.value < 0.02` alone, and `reveal.target` follows `hover.hovered`
+        — which is decided by the mask. So: pointer enters the 16px strip, the
+        dock reveals, the mask grows; the dock finishes hiding from a previous
+        cycle, the mask snaps back to 16px, the pointer is now outside it, hover
+        goes false, the dock hides, the pointer is back in the strip, and it
+        starts again. A feedback loop between an input region and the thing that
+        decides the input region. On screen: the dock flashes, and hides while
+        you are hovering it.
+
+        Two changes break the loop. The mask stays open while the pointer is
+        over the dock — an input region may not remove itself from under a
+        pointer it is currently receiving — and the threshold is low enough that
+        it only closes once the dock has genuinely finished leaving.
+    */
+    readonly property bool tuckedAway: root.autoHide && !root.debugging && !hover.hovered && reveal.value < 0.005
 
     /*!
         The SURFACE always reserves room for the tear gesture; the INPUT MASK
@@ -555,7 +589,40 @@ PanelWindow {
         keeps delivering motion to the grabbed surface regardless of it — which
         is the whole reason this split works.
     */
-    readonly property real surfaceExtent: root.bandThickness + root.tearZone + Math.max(stack.popupExtent, menu.popupExtent)
+    /*! Room kept for a menu or a stack, always — so opening one never touches
+        the surface. */
+    readonly property real popupReserve: 460
+
+    /*!
+        🔴 THE SURFACE MUST NOT CHANGE SIZE WHILE THE DOCK IS BEING USED, AND
+        IT DID — twice per right-click and sixty times a second during a resize.
+
+        It used to be `bandThickness + tearZone + max(stack, menu) popupExtent`.
+        Opening a menu therefore RESIZED the layer surface; the surface is
+        anchored to the screen edge, so growing it moves its top, the content
+        re-lays-out and the compositor renegotiates. The dock visibly jumped up
+        and settled back on every open and every close — reported as the dock
+        bouncing up and down on every right-click. The same term made a resize
+        drag renegotiate the surface every frame, which is the one case this
+        file already knew was forbidden, and it stuttered the window above too.
+
+        ⚠️ SIZED FROM THE CONFIGURATION, NOT FROM THE WORST CASE. The first fix
+        here reserved for the largest icon the resize gesture allows, which came
+        to 1072 of the 1152 rows on this display — a transparent surface across
+        nine tenths of the screen, held off the desktop by an input mask alone.
+        The mask is correct, but "one bug away from swallowing every click on
+        the desktop" is not a trade worth making to avoid a resize that happens
+        when the user drags the dock's edge and at no other time.
+
+        So it follows the config, and holds still during a gesture. Everything
+        that varies moment to moment lives in the mask, which is a client-side
+        input region and costs nothing to change.
+    */
+    readonly property real wantedSurface: root.bandThickness + root.tearZone + root.popupReserve
+    property real surfaceExtent: root.wantedSurface
+
+    onWantedSurfaceChanged: if (!gripDrag.active)
+        root.surfaceExtent = root.wantedSurface
 
     /*! What actually accepts input when no button is held. */
     readonly property real liveExtent: root.tuckedAway ? root.revealStrip : root.bandThickness + Math.max(stack.popupExtent, menu.popupExtent)
@@ -800,10 +867,16 @@ PanelWindow {
                 dragThreshold: 2
 
                 onActiveChanged: {
-                    if (gripDrag.active)
+                    if (gripDrag.active) {
                         grip.startSize = root.baseIconSize;
-                    else
+                    } else {
                         root.iconSizeRequested(root.baseIconSize);
+                        // The reservation held still through the gesture so the
+                        // desktop was not reflowed sixty times a second; this
+                        // is where it catches up, once.
+                        root._latchedExtent = root.restExtent;
+                        root.surfaceExtent = root.wantedSurface;
+                    }
                 }
 
                 onCentroidChanged: {
@@ -834,6 +907,7 @@ PanelWindow {
                 required property var modelData
 
                 maxIconSize: root.maxIconSize
+                restIconSize: root.baseIconSize
                 entry: item.modelData.entry
                 kind: item.modelData.kind ?? "app"
                 folder: item.modelData.folder ?? ""
