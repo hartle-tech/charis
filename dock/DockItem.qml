@@ -199,6 +199,27 @@ Item {
         stops listening. The owner of the state clears the state. */
     signal launchTimedOut
 
+    /*! The removal gesture was released short of the threshold: play the
+        refusal and put the icon back. */
+    signal dropRefused
+
+    /*! The removal gesture succeeded: the icon is gone. Emitted when the burst
+        finishes, so the caller unpins only once the pixels have landed. */
+    signal dropAccepted
+
+    /*! Play the "not far enough" answer — a CRT switching off, then the icon
+        returns to its slot. */
+    function refuse(): void {
+        crt.start();
+    }
+
+    /*! Play the removal — the icon's own pixels blown apart. */
+    function vaporise(): void {
+        burst.fire();
+    }
+
+    readonly property bool _leaving: crt.running || burst.running
+
     readonly property bool _horizontal: root.edge === Qt.BottomEdge || root.edge === Qt.TopEdge
 
     // ── Launch bounce ───────────────────────────────────────────────────
@@ -270,6 +291,31 @@ Item {
         Component.onCompleted: tearFade.reset(1)
     }
 
+    // ── Leaving the dock ────────────────────────────────────────────────
+    //
+    // Two answers to the same gesture, and they have to be different enough to
+    // read at a glance: refused, and accepted. A fade for both would leave the
+    // user unsure whether the app is still pinned.
+    CrtOff {
+        id: crt
+        onFinished: root.dropRefused()
+    }
+
+    // ⚠️ A SIBLING OF THE ICON, NOT A CHILD. `opacity` in Qt Quick applies to
+    // the whole subtree, so hiding the intact icon by setting iconBox's opacity
+    // to 0 would hide the burst with it — the explosion would be invisible and
+    // the icon would simply vanish, which is the animation this replaces.
+    PixelBurst {
+        id: burst
+        x: iconBox.x + fx.value
+        y: iconBox.y + fy.value
+        width: root.iconSize
+        height: root.iconSize
+        source: icon.source
+        cells: 8
+        onFinished: root.dropAccepted()
+    }
+
     readonly property real _lift: bounce.value + tearLift.value
 
     // The dragged icon's displacement. Very fast while held — it must feel
@@ -301,16 +347,31 @@ Item {
 
         width: root.iconSize
         height: root.iconSize
-        opacity: tearFade.value
+        // The burst draws the icon's own fragments, so the intact icon must be
+        // out of the way while it plays or the artwork sits behind its own
+        // explosion.
+        opacity: burst.running ? 0 : tearFade.value * crt.opacity
 
         // ⚠️ A TRANSFORM, NOT x/y. iconBox is positioned by anchors, and in QML
         // anchors silently win over an x/y assignment — so the drag-follow was
         // written, deployed, and did absolutely nothing, with no warning. This
         // is the second time the same rule has bitten in this file.
-        transform: Translate {
-            x: fx.value
-            y: fy.value
-        }
+        // ⚠️ ORDER MATTERS. The Scale must come after the Translate so the
+        // collapse happens about the icon where it currently IS, not about
+        // where its slot is — a CRT that switches off somewhere other than
+        // where you released the icon reads as a second, unrelated animation.
+        transform: [
+            Translate {
+                x: fx.value
+                y: fy.value
+            },
+            Scale {
+                origin.x: iconBox.width / 2
+                origin.y: iconBox.height / 2
+                xScale: crt.xScale
+                yScale: crt.yScale
+            }
+        ]
 
         // Grow from the dock's floor rather than from the centre. An icon that
         // magnifies about its own middle sinks INTO the edge of the screen,
@@ -342,12 +403,22 @@ Item {
         Rectangle {
             id: sep
             visible: root.isSeparator
-            anchors.horizontalCenter: parent.horizontalCenter
+            // ⚠️ ORIENTED WITH THE DOCK. A divider in a vertical dock is a
+            // HORIZONTAL line, and the previous version hard-coded a tall thin
+            // rectangle positioned from the bottom of the item — correct on a
+            // bottom dock and nonsense on the other three.
+            anchors.horizontalCenter: root._horizontal ? parent.horizontalCenter : undefined
+            anchors.verticalCenter: root._horizontal ? undefined : parent.verticalCenter
+
             // Centred on the panel's band rather than on the item, which grows
-            // upward past it.
-            y: parent.height - root.restIconSize / 2 - height / 2
-            width: sepHover.hovered || sepDrag.active ? 2 : 1
-            height: root.restIconSize * (sepHover.hovered || sepDrag.active ? 0.72 : 0.58)
+            // out of the band when magnified.
+            y: root._horizontal ? (root.edge === Qt.TopEdge ? root.restIconSize / 2 - height / 2 : parent.height - root.restIconSize / 2 - height / 2) : undefined
+            x: root._horizontal ? undefined : (root.edge === Qt.LeftEdge ? root.restIconSize / 2 - width / 2 : parent.width - root.restIconSize / 2 - width / 2)
+
+            readonly property real thin: sepHover.hovered || sepDrag.active ? 2 : 1
+            readonly property real long: root.restIconSize * (sepHover.hovered || sepDrag.active ? 0.72 : 0.58)
+            width: root._horizontal ? sep.thin : sep.long
+            height: root._horizontal ? sep.long : sep.thin
             radius: 1
             color: Qt.rgba(1, 1, 1, sepHover.hovered || sepDrag.active ? 0.55 : 0.22)
 
@@ -418,6 +489,16 @@ Item {
             sourceSize.height: root.decodeSize
             asynchronous: true
             smooth: true
+        }
+
+        // The CRT's energy collecting into the line. White, additive-ish, and
+        // gone the moment the effect is not running.
+        Rectangle {
+            anchors.fill: parent
+            visible: crt.running
+            color: "white"
+            opacity: crt.bloom
+            radius: parent.width * 0.2237
         }
 
         // ⚠️ A DRAWN FALLBACK, NOT A COLOURED SQUARE.

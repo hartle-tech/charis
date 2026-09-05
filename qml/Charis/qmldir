@@ -20,6 +20,8 @@ Squircle 1.0 Squircle.qml
 MagnifiedRow 1.0 MagnifiedRow.qml
 Glass 1.0 Glass.qml
 Hop 1.0 Hop.qml
+CrtOff 1.0 CrtOff.qml
+PixelBurst 1.0 PixelBurst.qml
 
 singleton FrameBudget 1.0 FrameBudget.qml
 singleton Ticker 1.0 Ticker.qml

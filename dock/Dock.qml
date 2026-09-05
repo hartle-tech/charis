@@ -469,9 +469,18 @@ PanelWindow {
     onRestExtentChanged: if (!gripDrag.active)
         root._latchedExtent = root.restExtent
 
+    // 🔴 A VERTICAL DOCK HAD NO HEIGHT AT ALL. `implicitHeight` is
+    // `horizontal ? surfaceExtent : 0`, so on a left- or right-hand dock the
+    // surface's height had to come from anchors — and only ONE of top/bottom
+    // was ever set. The compositor gave it a height of 1: `xywh: 10 581 1159 1`.
+    // Every Edge except Bottom was broken from the day the setting shipped, and
+    // the settings panel has offered all four the whole time.
+    //
+    // The rule is the same in both orientations: span the axis the dock runs
+    // ALONG, and anchor to the single edge it sits on across the other.
     anchors {
-        bottom: root.edge === Qt.BottomEdge
-        top: root.edge === Qt.TopEdge
+        bottom: root.edge === Qt.BottomEdge || !root.horizontal
+        top: root.edge === Qt.TopEdge || !root.horizontal
         left: root.edge === Qt.LeftEdge || root.horizontal
         right: root.edge === Qt.RightEdge || root.horizontal
     }
@@ -536,7 +545,35 @@ PanelWindow {
         over it the whole way. The exclusive zone is unaffected — it describes
         what the dock occupies, not how big its surface is — so nothing on the
         desktop moves. */
-    readonly property real tearZone: 240
+    /*! The screen dimension the removal drag travels along. */
+    readonly property real travelExtent: root.horizontal ? root.screenHeight : root.screenWidth
+
+    /*! The largest surface the output can hold.
+
+        🔴 THE SURFACE WENT OFF THE TOP OF THE SCREEN. With the icon size left
+        at 131 by a resize, the computed surface came to 1159 on a 1152-tall
+        output and the compositor placed it at y = −7. Everything downstream —
+        the mask, the tear distance, where the row thinks the screen edge is —
+        is measured from a surface that is partly not on the display. Nothing
+        in the geometry may exceed the output it lives on. */
+    readonly property real maxSurface: root.travelExtent - 8
+
+    /*! Room above the dock for the removal gesture: as much as the output can
+        spare. A layer surface stops receiving motion the moment the pointer
+        leaves it, even with a button held, so anything past this simply stops
+        being felt — which is why the threshold below is derived FROM this
+        rather than the other way round. */
+    readonly property real tearZone: Math.max(120, root.maxSurface - root.bandThickness)
+
+    /*! How far from the dock's edge an icon must be dragged before releasing
+        it removes the app.
+
+        Half the screen, deliberately. Removal is destructive and used to fire
+        at half an icon's distance, which is inside the slop of an ordinary
+        reorder — a nudge upward while shuffling icons deleted one. macOS is
+        similarly forgiving about small excursions and only lets go when you
+        have clearly left. */
+    readonly property real tearThreshold: Math.min(root.travelExtent / 2, root.tearZone - root.baseIconSize * 0.5)
 
     /*!
         How close to the screen edge the pointer must come to reveal a hidden
@@ -618,7 +655,12 @@ PanelWindow {
         that varies moment to moment lives in the mask, which is a client-side
         input region and costs nothing to change.
     */
-    readonly property real wantedSurface: root.bandThickness + root.tearZone + root.popupReserve
+    /*! ⚠️ THE LARGER OF THE TWO, NOT THE SUM. A popup is never open during a
+        drag and a drag never happens with a popup open, so the surface needs
+        room for whichever of them is bigger — not for both at once. Adding
+        them put the surface past the top of the screen once the tear distance
+        became half the display. */
+    readonly property real wantedSurface: Math.min(root.maxSurface, root.bandThickness + Math.max(root.tearZone, root.popupReserve))
     property real surfaceExtent: root.wantedSurface
 
     onWantedSurfaceChanged: if (!gripDrag.active)
@@ -984,7 +1026,12 @@ PanelWindow {
                     // icon. Expressed against what the dock OCCUPIES rather
                     // than as a tuned constant, so it stays correct at every
                     // icon size and edge gap.
-                    drag.tornOff = edgeDist > root.restExtent + root.baseIconSize * 0.4;
+                    // 🔴 HALF AN ICON WAS FAR TOO LITTLE. Removing an app from
+                    // the dock is destructive and it was happening on a slip:
+                    // nudge an icon up while reordering and it was gone. The
+                    // threshold is the SCREEN'S CENTRE now — you have to mean
+                    // it, and the distance is one nobody reaches by accident.
+                    drag.tornOff = edgeDist > root.tearThreshold;
                     if (!drag.tornOff)
                         drag.toIndex = root.indexNear(axisPos);
                 }
