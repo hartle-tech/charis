@@ -99,6 +99,34 @@ ShellRoot {
             }
         }
 
+        /*!
+            Announce that `id` is starting, so its icon bounces until a window
+            appears.
+
+            The dock already does this for launches it performs itself, but it
+            is not the only thing that starts applications: a launcher, a
+            terminal, a keybind or a file manager's "Open With" all leave the
+            dock with no idea anything is happening, and the user watching the
+            dock sees nothing for the several seconds a cold start takes. This
+            is the seam that lets any of them say so.
+
+            Lower-cased on the way in, because item keys are normalised for
+            matching against Wayland appIds — `org.gnome.Nautilus` from a
+            caller has to find `org.gnome.nautilus` in the map.
+        */
+        function bounce(id: string): void {
+            if (root.settingsDock)
+                root.settingsDock.beginLaunch(id.toLowerCase().replace(/\.desktop$/, ""));
+        }
+
+        /*! Stop bouncing `id` — for a caller that knows the app finished
+            starting, or failed to. Without a window of its own the dock cannot
+            tell the difference, and would otherwise wait out the timeout. */
+        function endBounce(id: string): void {
+            if (root.settingsDock)
+                root.settingsDock.endLaunch(id.toLowerCase().replace(/\.desktop$/, ""));
+        }
+
         /*! The configuration the dock is ACTUALLY using, as opposed to what is
             on disk. The two diverging silently is exactly the class of bug this
             exists to catch. */

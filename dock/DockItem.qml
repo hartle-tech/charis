@@ -48,16 +48,29 @@ Item {
         A screenshot at native resolution is the only way to see it — at any
         smaller magnification the softness reads as anti-aliasing.
 
-        Snapped to the freedesktop ladder rather than left as an odd number,
-        because a theme stores 48/64/128/256 and asking for 124 makes Qt take
-        the 128 and rescale it. Asking for 128 uses it as authored.
+        🔴 AND THEN IT ASKED FOR 128 AND STEAM WAS STILL A BLURRED SMUDGE.
+        Icon lookup does NOT round up to the next available size — it picks the
+        size with the smallest absolute distance from what you asked for. Steam
+        ships 16, 24, 32, 48 and 256, with nothing in between; against a request
+        of 128 the 48 is 80 away and the 256 is 128 away, so the resolver hands
+        back the FORTY-EIGHT and it gets stretched to 124 device pixels.
+        Obsidian looked fine two icons over purely because it happens to ship a
+        128 and not a 48. Measured on the running dock, Laplacian variance
+        across the icon: Nautilus 1969, Steam 24 — eighty times softer, sitting
+        in the same row.
+
+        So ask for the top of the ladder. An exact request of 256 exact-matches
+        every theme that has a 256, which in practice is every application icon
+        that ships large artwork at all; a theme that stops at 48 returns the 48
+        either way, so nothing is made worse. Downscaling 256 → 124 is
+        resampling with information to spare and stays crisp; upscaling 48 → 124
+        invents three quarters of its pixels and cannot.
+
+        The cost is one 256×256 decode per dock item, once, at startup.
     */
     readonly property int decodeSize: {
         const want = root.maxIconSize * Math.max(1, Screen.devicePixelRatio);
-        for (const s of [32, 48, 64, 96, 128, 256, 512])
-            if (s >= want)
-                return s;
-        return 512;
+        return want > 256 ? 512 : 256;
     }
 
     /*! Which screen edge the dock is on — decides where the dot goes. */
@@ -135,6 +148,18 @@ Item {
     signal dragStarted
     signal dragEnded
 
+    /*! The launch gave up waiting for a window.
+
+        🔴 A SIGNAL, NOT AN ASSIGNMENT. `launching` is bound from the dock's
+        `launching` map, and this timer used to clear it by writing
+        `root.launching = false` — which destroys that binding, permanently,
+        for this item. One slow application, or one whose toplevel `app_id`
+        never matches its desktop id (Steam does exactly this), and the icon
+        could never bounce again for the rest of the session. Nothing reports
+        it: the code is still there, the timer still fires, the property just
+        stops listening. The owner of the state clears the state. */
+    signal launchTimedOut
+
     readonly property bool _horizontal: root.edge === Qt.BottomEdge || root.edge === Qt.TopEdge
 
     // ── Launch bounce ───────────────────────────────────────────────────
@@ -178,7 +203,7 @@ Item {
     Timer {
         interval: 12000
         running: root.launching
-        onTriggered: root.launching = false
+        onTriggered: root.launchTimedOut()
     }
 
     Spring {
@@ -278,12 +303,39 @@ Item {
             }
         }
 
-        IconImage {
+        // 🔴 A PLAIN Image, NOT Quickshell's IconImage — AND THIS IS THE WHOLE
+        // REASON THE ICONS WERE SOFT.
+        //
+        // IconImage looks like it takes a decode size: it has an `implicitSize`
+        // property and every example sets it. Read its source and implicitSize
+        // is a default for implicitWidth/implicitHeight and NOTHING else — the
+        // decode is driven by
+        //
+        //     sourceSize.width: Math.min(root.width, root.height)
+        //
+        // which, under `anchors.fill: parent`, is the item's LOGICAL layout
+        // size. So the icon was requested at 52 and painted into 65 device
+        // pixels on this 1.25-scale display, no matter what implicitSize said.
+        // Two separate attempts to fix the softness by changing implicitSize
+        // produced screenshots that were byte-for-byte identical to the ones
+        // before them — a +0.0% A/B result that reads as "this is not the
+        // cause" when it actually means "this property was never connected to
+        // anything".
+        //
+        // Worse, that binding re-decodes the icon on every frame of a hover,
+        // because the item's width IS the magnifying size.
+        //
+        // A plain Image with an explicit sourceSize fixes both: one decode, at
+        // a size we choose, in device pixels.
+        Image {
             id: icon
             visible: root.kind === "app" && icon.status === Image.Ready
             anchors.fill: parent
+            fillMode: Image.PreserveAspectFit
             source: root.iconOverride !== "" ? (root.iconOverride.startsWith("/") ? "file://" + root.iconOverride : root.iconOverride) : (root.entry ? Quickshell.iconPath(root.entry.icon, "application-x-executable") : "")
-            implicitSize: root.decodeSize
+            sourceSize.width: root.decodeSize
+            sourceSize.height: root.decodeSize
+            asynchronous: true
             smooth: true
         }
 

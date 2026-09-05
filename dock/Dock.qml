@@ -237,6 +237,20 @@ PanelWindow {
         root.launching = next;
     }
 
+    /*! Stop bouncing `key`, whether or not its window ever appeared.
+
+        The dock owns this map, so the dock clears it. The item that timed out
+        cannot clear its own `launching`, because that property is bound from
+        here and writing to it would kill the binding — see DockItem's
+        \l{DockItem::launchTimedOut}{launchTimedOut}. */
+    function endLaunch(key: string): void {
+        if (root.launching[key] === undefined)
+            return;
+        const next = Object.assign({}, root.launching);
+        delete next[key];
+        root.launching = next;
+    }
+
     // The moment a launching app owns a toplevel, stop bouncing. Watching the
     // model rather than a timer is what makes the bounce end exactly when the
     // window appears instead of a beat before or after it.
@@ -753,6 +767,8 @@ PanelWindow {
                 }
 
                 onSecondaryRequested: (mx, my) => menu.openFor(item.modelData, mx)
+
+                onLaunchTimedOut: root.endLaunch(item.modelData.key)
 
                 onDragStarted: {
                     // Only pinned apps reorder. Dragging a running-but-unpinned
