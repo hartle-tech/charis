@@ -71,10 +71,21 @@ Item {
     signal activated
     signal secondaryRequested(real x, real y)
 
-    /*! Emitted while this icon is being dragged. `axisPos` is along the row and
-        `crossPos` is perpendicular to it, both in the DOCK's coordinates — the
-        caller works in row space, not in this item's, which moves underneath
-        the drag as the row re-lays-out. */
+    /*!
+        Emitted while this icon is being dragged.
+
+        `axisPos` is along the row in the DOCK's coordinates, because the caller
+        reorders in row space. `crossPos` is perpendicular and deliberately in
+        THIS ITEM's own frame — how far the pointer is from the item's top edge.
+
+        ⚠️ Mixing the two frames is a real bug that shipped for one round. The
+        surface grows while a drag is active (so the pointer keeps producing
+        motion events after it leaves the dock), which moves `content`, which
+        moves the item — so a cross position expressed in surface coordinates
+        JUMPS the instant the drag starts. The jump exceeded the tear-off
+        threshold, and dragging an icon sideways to reorder it silently deleted
+        it instead. A local frame cannot shift underneath the gesture.
+    */
     signal dragMoved(real axisPos, real crossPos)
     signal dragStarted
     signal dragEnded
@@ -329,7 +340,7 @@ Item {
             // as the row re-lays-out underneath the drag, so a position
             // measured in it chases itself.
             const p = dragger.centroid.position;
-            root.dragMoved(root._horizontal ? root.x + p.x : root.y + p.y, root._horizontal ? root.y + p.y : root.x + p.x);
+            root.dragMoved(root._horizontal ? root.x + p.x : root.y + p.y, root._horizontal ? p.y : p.x);
         }
     }
 }

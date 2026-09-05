@@ -169,7 +169,14 @@ PanelWindow {
                 toplevels: tls,
                 kind: "app",
                 pinned: true,
-                key: norm(id)
+                key: norm(id),
+                // ⚠️ The ORIGINAL string from the pinned list, not the
+                // normalised key. `key` is lower-cased for matching against a
+                // Wayland appId, so unpinning by it silently misses every entry
+                // with a capital in it — `org.gnome.Nautilus` was undraggable
+                // out of the dock while `firefox` worked, which looks like a
+                // gesture bug and is a string bug.
+                pinId: id
             });
         }
 
@@ -355,7 +362,23 @@ PanelWindow {
     // That rule is about resizing every FRAME of a magnification, which
     // renegotiates with the compositor sixty times a second; this is once per
     // menu.
-    readonly property real liveExtent: root.bandThickness + Math.max(stack.popupExtent, menu.popupExtent)
+    /*! Room above the dock to drag an icon out into.
+
+        ⚠️ WITHOUT THIS THE TEAR-OFF GESTURE CANNOT BE DETECTED AT ALL. A layer
+        surface stops receiving pointer motion the moment the pointer leaves it,
+        even mid-drag with the button held — measured: dragging an icon 240px
+        above the dock produced not one `centroidChanged`, so the handler never
+        saw the pointer go anywhere and `tornOff` stayed false for ever.
+        Reading code would never have found it; the arithmetic was right and
+        simply never ran.
+
+        So the surface grows while a drag is in progress and the pointer stays
+        over it the whole way. The exclusive zone is unaffected — it describes
+        what the dock occupies, not how big its surface is — so nothing on the
+        desktop moves. */
+    readonly property real tearZone: 240
+
+    readonly property real liveExtent: root.bandThickness + Math.max(stack.popupExtent, menu.popupExtent, drag.active ? root.tearZone : 0)
 
     implicitHeight: root.horizontal ? root.liveExtent : 0
     implicitWidth: root.horizontal ? 0 : root.liveExtent
@@ -618,12 +641,12 @@ PanelWindow {
                 onDragMoved: (axisPos, crossPos) => {
                     if (!drag.active)
                         return;
-                    // How far out of the dock, perpendicular to the row. The
-                    // band's own thickness is the natural threshold: anything
-                    // still over the dock is a reorder, anything clear of it is
-                    // a removal, and there is no arbitrary constant to tune.
-                    const bandStart = root.horizontal ? (root.height - root.restExtent) : (root.edge === Qt.LeftEdge ? 0 : root.width - root.restExtent);
-                    const out = root.horizontal ? (root.edge === Qt.BottomEdge ? bandStart - crossPos : crossPos - root.restExtent) : (root.edge === Qt.LeftEdge ? crossPos - root.restExtent : bandStart - crossPos);
+                    // How far the pointer has travelled out of the item, away
+                    // from the screen edge. `crossPos` is in the item's own
+                    // frame, so this is immune to the surface growing under the
+                    // drag — which is exactly what broke it before.
+                    const towardEdge = root.edge === Qt.BottomEdge || root.edge === Qt.RightEdge;
+                    const out = towardEdge ? -crossPos : crossPos - (root.horizontal ? item.height : item.width);
                     drag.tornOff = out > root.band * 0.75;
                     if (!drag.tornOff)
                         drag.toIndex = root.indexNear(axisPos);
@@ -658,7 +681,7 @@ PanelWindow {
             if (removed) {
                 const it = root.items[from];
                 if (it)
-                    root.setPinned(it.kind === "folder" ? it.folder : it.key, false);
+                    root.setPinned(it.kind === "folder" ? it.folder : (it.pinId ?? it.key), false);
                 return;
             }
 

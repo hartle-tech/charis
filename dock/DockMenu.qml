@@ -135,7 +135,7 @@ Item {
         else if (item.kind === "unpinFolder")
             root.pinRequested(root.app.folder, false);
         else if (item.kind === "pin")
-            root.pinRequested(root.app.key, !root.app.pinned);
+            root.pinRequested(root.app.pinId ?? root.app.key, !root.app.pinned);
         else if (item.kind === "action")
             item.action.execute();
         else if (item.kind === "launch" && root.app.entry)
