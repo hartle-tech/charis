@@ -231,6 +231,117 @@ ShellRoot {
         }
     }
 
+    /*!
+        The file manager, and Finder's menu behind it.
+
+        ⚠️ `xdg-open` ON A DIRECTORY, NOT A HARD-CODED APPLICATION. Which
+        program opens a folder is the user's choice and the desktop already
+        records it; a dock that launches Nautilus because the author used
+        Nautilus is one more thing to reconfigure. (Worth knowing: on this
+        machine `xdg-mime query default inode/directory` answers
+        `org.gnome.baobab` — the Disk Usage Analyser — so the setting is not
+        merely theoretical, it is wrong here and the dock will faithfully honour
+        it until it is fixed.)
+    */
+    function openFiles(path: string): void {
+        Quickshell.execDetached(["xdg-open", path]);
+    }
+
+    /*! The desktop id of whatever opens a folder here.
+
+        ⚠️ ASKED, NOT ASSUMED. The launcher's icon has to be the icon of the
+        thing clicking it actually opens, or the dock is lying about its own
+        first slot — and "system-file-manager" is a name plenty of themes do
+        not carry, which is how that slot ended up a blank blue tile. */
+    property string filesEntryId: ""
+
+    Process {
+        id: filesHandler
+        running: true
+        command: ["/bin/sh", "-c", "xdg-mime query default inode/directory 2>/dev/null"]
+        stdout: StdioCollector {
+            onStreamFinished: root.filesEntryId = text.trim().replace(/\.desktop$/, "")
+        }
+    }
+
+    readonly property string filesIcon: {
+        const e = root.filesEntryId === "" ? null : DesktopEntries.byId(root.filesEntryId);
+        return e && e.icon ? e.icon : "system-file-manager";
+    }
+
+    /*! Recently-visited folders, newest first.
+
+        Read from the freedesktop recent-files store that every GTK and Qt file
+        dialog already writes. Nothing here has to be told what the user has
+        been doing — the desktop knows, and a "Recent Folders" list assembled
+        from anywhere else would disagree with every other application's. */
+    property var recentFolders: []
+
+    Process {
+        id: recents
+        running: true
+        // ⚠️ /bin/sh, NOT "sh". Quickshell resolves a bare name against the
+        // process's PATH, and a systemd user unit's PATH is whatever the unit
+        // says — which for a while was hyprland's bin and nothing else. The
+        // command then fails with "binary could not be found" and the recent
+        // list is silently empty. /bin/sh is the one path every distribution
+        // guarantees.
+        command: ["/bin/sh", "-c", "tr '<' '\\n' < \"$HOME/.local/share/recently-used.xbel\" 2>/dev/null | grep -o 'file:///[^\"]*' | tail -80"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                const seen = {};
+                const dirs = [];
+                for (const raw of text.trim().split("\n")) {
+                    if (!raw)
+                        continue;
+                    const dir = decodeURIComponent(raw).replace(/\/[^\/]*$/, "");
+                    if (dir && !seen[dir]) {
+                        seen[dir] = true;
+                        dirs.push(dir);
+                    }
+                    if (dirs.length >= 6)
+                        break;
+                }
+                root.recentFolders = dirs;
+            }
+        }
+    }
+
+    Timer {
+        // The recent list changes as the user works; re-read it occasionally
+        // rather than once at startup, and never on a timer fast enough to
+        // matter for power.
+        interval: 60000
+        running: true
+        repeat: true
+        onTriggered: recents.running = true
+    }
+
+    /*! Finder's menu, minus the parts that need a file manager's own UI. */
+    function runLauncherAction(action: string, path: string): void {
+        const home = Quickshell.env("HOME");
+        if (action === "open" && path !== "")
+            root.openFiles(path);
+        else if (action === "new")
+            root.openFiles(home);
+        else if (action === "goto")
+            root.openFiles(home);
+        else if (action === "find")
+            Quickshell.execDetached(["xdg-open", home]);
+        else if (action === "connect")
+            Quickshell.execDetached(["xdg-open", "network:///"]);
+        else if (action === "showAll")
+            root.eachToplevel(t => t.activate());
+        else if (action === "hide")
+            root.eachToplevel(t => t.minimized = true);
+    }
+
+    function eachToplevel(fn: var): void {
+        const list = ToplevelManager.toplevels.values;
+        for (const t of list)
+            fn(t);
+    }
+
     /*! The wallpaper the glass refracts: the explicit path when one is given,
         otherwise whatever `wallpaperFrom` currently names. */
     readonly property string livePaper: cfg.wallpaper !== "" ? cfg.wallpaper : root.paperFromFile
@@ -355,6 +466,11 @@ ShellRoot {
                 backdrop, not an approximation of one. Empty leaves the glass
                 off rather than drawing an invisible nothing, which is what it
                 did for its whole existence before this. */
+            /*! The fixed file-manager slot at the head of the row. */
+            property bool showLauncher: true
+            /*! Empty means "whatever opens a folder on this system". */
+            property string launcherIcon: ""
+
             property string wallpaper: ""
 
             /*! A file whose CONTENTS is the wallpaper's path, watched for
@@ -434,6 +550,14 @@ ShellRoot {
             useGlass: cfg.useGlass
             blurAmount: cfg.blurAmount
             wallpaper: root.livePaper
+            showLauncher: cfg.showLauncher
+            launcherIcon: cfg.launcherIcon === "" ? root.filesIcon : cfg.launcherIcon
+            recentFolders: root.recentFolders
+
+            // Click: open the default file manager at home.
+            onLauncherActivated: root.openFiles(Quickshell.env("HOME"))
+
+            onLauncherAction: (action, path) => root.runLauncherAction(action, path)
 
             // Where this surface sits on its output, so the wallpaper the
             // glass refracts can be positioned to line up with the real one

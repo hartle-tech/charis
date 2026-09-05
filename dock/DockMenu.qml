@@ -52,12 +52,21 @@ Item {
         a destroyed binding cannot happen here. */
     signal autoHideRequested(bool on)
 
+    /*! A Finder-menu entry was chosen. */
+    signal launcherAction(string action, string path)
+
     /*! Current mode, so the menu can tick the active one. */
     property string folderView: "grid"
 
     /*! Mirrored so the menu can say "Turn Hiding On" or "Off" rather than
         offering a toggle whose current state the user has to guess. */
     property bool autoHide: false
+
+    /*! Folders the launcher offers to reopen, most recent first. */
+    property var recentFolders: []
+
+    /*! Every window on the desktop, for the launcher's window list. */
+    property var allToplevels: []
     readonly property bool horizontal: root.edge === Qt.BottomEdge || root.edge === Qt.TopEdge
 
     function openFor(app: var, pos: real): void {
@@ -75,6 +84,78 @@ Item {
         const out = [];
         const e = root.app.entry;
         const tls = root.app.toplevels;
+
+        // 🔴 THE DOCK'S SETTINGS ARE NOT AN APPLICATION'S BUSINESS. They used
+        // to appear at the bottom of every icon's menu, so right-clicking
+        // Firefox offered to change how the dock hides — and the entry people
+        // actually wanted, "Remove from Dock", sat above two controls that had
+        // nothing to do with Firefox. macOS puts them on the divider, which is
+        // the one part of a dock that belongs to the dock. So do we.
+        // The file-manager slot, with Finder's menu — read bottom to top, the
+        // order macOS uses, because a dock menu opens UPWARD and the first
+        // thing under the pointer should be the thing you reach for most.
+        if (root.app.kind === "launcher") {
+            for (const t of root.allToplevels)
+                out.push({
+                    label: t.title || t.appId || "Window",
+                    kind: "focus",
+                    toplevel: t
+                });
+            out.push({
+                label: "New Window",
+                kind: "launcherAction",
+                action: "new",
+                separated: root.allToplevels.length > 0
+            });
+            out.push({
+                label: "Find…",
+                kind: "launcherAction",
+                action: "find"
+            });
+            out.push({
+                label: "Go to Folder…",
+                kind: "launcherAction",
+                action: "goto",
+                separated: true
+            });
+            out.push({
+                label: "Connect to Server…",
+                kind: "launcherAction",
+                action: "connect"
+            });
+            for (let i = 0; i < root.recentFolders.length; ++i)
+                out.push({
+                    label: root.recentFolders[i].replace(/^.*\//, "") || root.recentFolders[i],
+                    kind: "launcherAction",
+                    action: "open",
+                    path: root.recentFolders[i],
+                    separated: i === 0
+                });
+            out.push({
+                label: "Show All Windows",
+                kind: "launcherAction",
+                action: "showAll",
+                separated: true
+            });
+            out.push({
+                label: "Hide",
+                kind: "launcherAction",
+                action: "hide"
+            });
+            return out;
+        }
+
+        if (root.app.kind === "separator") {
+            out.push({
+                label: root.autoHide ? "Turn Hiding Off" : "Turn Hiding On",
+                kind: "autohide"
+            });
+            out.push({
+                label: "Dock Settings…",
+                kind: "settings"
+            });
+            return out;
+        }
 
         // A folder is not an app. Offering it "New Window" and "Quit" would be
         // noise; what it needs is macOS's "View content as".
@@ -139,20 +220,7 @@ Item {
                 kind: "quit"
             });
 
-        // Auto-hide belongs here as well as in the settings panel. macOS puts
-        // "Turn Hiding On/Off" in the dock's own context menu because it is the
-        // one dock preference people change often enough to resent opening a
-        // window for — and the panel is two clicks and a window away.
-        out.push({
-            label: root.autoHide ? "Turn Hiding Off" : "Turn Hiding On",
-            kind: "autohide",
-            separated: true
-        });
 
-        out.push({
-            label: "Dock Settings…",
-            kind: "settings"
-        });
 
         return out;
     }
@@ -160,6 +228,8 @@ Item {
     function invoke(item: var): void {
         if (item.kind === "settings")
             root.settingsRequested();
+        else if (item.kind === "launcherAction")
+            root.launcherAction(item.action, item.path ?? "");
         else if (item.kind === "autohide")
             root.autoHideRequested(!root.autoHide);
         else if (item.kind === "view")

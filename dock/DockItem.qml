@@ -87,8 +87,11 @@ Item {
     /*! Used when no `.desktop` entry matched — normally the toplevel's appId. */
     property string fallbackLabel: ""
 
-    /*! "app", "folder" or "separator". */
+    /*! "app", "folder", "separator" or "launcher". */
     property string kind: "app"
+
+    /*! Icon name for the fixed file-manager slot. */
+    property string launcherIcon: "system-file-manager"
 
     /*! Absolute path, for kind == "folder". */
     property string folder: ""
@@ -284,6 +287,11 @@ Item {
         repeat: true
         running: root.launching
         triggeredOnStart: true
+        // 🔴 1.05x AN ICON WAS TOO MUCH. A full icon-height hop reads as the
+        // dock shouting; macOS's is closer to half, and the point of the
+        // gesture is "still working", not "look at me". Half an icon, with the
+        // same ballistic arc.
+        //
         // Stated as a HEIGHT, not as an impulse. The apex of a ballistic hop
         // is v²/2g, so "one icon tall" and "720 px/s" are only the same at one
         // gravity — and an impulse expressed in spring units meant nothing at
@@ -291,7 +299,7 @@ Item {
         // lifted a 52px icon by thirteen pixels: present in the code, invisible
         // on the screen, and exactly the kind of "it is implemented" that is
         // worth nothing.
-        onTriggered: bounce.launchToHeight(root.iconSize * 1.05)
+        onTriggered: bounce.launchToHeight(root.iconSize * 0.5)
     }
 
     // Stop bouncing whether or not the app ever appeared. An app that fails to
@@ -520,6 +528,33 @@ Item {
             smooth: true
         }
 
+        // The fixed file-manager slot. Same decode path as everything else, so
+        // it is as sharp as the rest of the row.
+        Image {
+            id: launcherImg
+            visible: root.kind === "launcher" && launcherImg.status === Image.Ready
+            anchors.fill: parent
+            fillMode: Image.PreserveAspectFit
+            // A chain, because no single name is present in every theme:
+            // whatever the default handler declares, then the freedesktop
+            // generic, then a plain folder.
+            source: Quickshell.iconPath(root.launcherIcon, true) || Quickshell.iconPath("system-file-manager", true) || Quickshell.iconPath("folder", true)
+            sourceSize.width: root.decodeSize
+            sourceSize.height: root.decodeSize
+            asynchronous: true
+            smooth: true
+        }
+
+        // A theme with no file-manager icon still has to show something the
+        // user can aim at.
+        Squircle {
+            visible: root.kind === "launcher" && launcherImg.status !== Image.Ready && launcherImg.status !== Image.Loading
+            anchors.fill: parent
+            radius: parent.width * 0.2237
+            smoothing: 1
+            fillColor: "#4d7cc4"
+        }
+
         // The folder's own themed icon, resolved and decoded exactly like an
         // app's so it is as sharp as the rest of the row.
         Image {
@@ -713,9 +748,12 @@ Item {
         longPressThreshold: 0.4
     }
 
+    // ⚠️ ENABLED ON THE SEPARATOR TOO. The dock's own settings belong to the
+    // dock, not to whichever application you happened to right-click — macOS
+    // puts them on the divider. The separator was the one item that could not
+    // raise a menu at all, which is exactly where they now live.
     TapHandler {
         acceptedButtons: Qt.RightButton
-        enabled: !root.isSeparator
         gesturePolicy: TapHandler.ReleaseWithinBounds
         onTapped: root.secondaryRequested(root.x + root.width / 2, root.y)
     }

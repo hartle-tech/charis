@@ -56,6 +56,19 @@ PanelWindow {
     /*! Absolute folder paths, shown after a separator as macOS-style stacks. */
     property var folders: []
 
+    /*! A fixed file-manager slot at the head of the row, like Finder's. */
+    property bool showLauncher: true
+
+    /*! Which icon that slot wears. */
+    property string launcherIcon: "system-file-manager"
+
+    /*! Folders the launcher's menu offers to reopen, most recent first. */
+    property var recentFolders: []
+
+    /*! The launcher was clicked, or one of its menu entries chosen. */
+    signal launcherActivated
+    signal launcherAction(string action, string path)
+
     /*! Hide until the pointer reaches the screen edge. */
     property bool autoHide: true
 
@@ -260,6 +273,19 @@ PanelWindow {
         const out = [];
         const taken = {};
 
+        // The permanent first slot, as macOS gives Finder. It is not pinned,
+        // cannot be dragged out, and does not come and go with what is
+        // running: a dock whose first icon moves is a dock you cannot build
+        // muscle memory for.
+        if (root.showLauncher)
+            out.push({
+                entry: null,
+                toplevels: [],
+                kind: "launcher",
+                pinned: true,
+                key: "__launcher"
+            });
+
         for (const id of root.pinned) {
             const entry = DesktopEntries.byId(id) ?? null;
             // Match on the entry's own id AND on StartupWMClass: an app whose
@@ -415,7 +441,10 @@ PanelWindow {
         // auto-hiding dock would slide away mid-reach, taking the menu with it.
         // The menu was reachable in principle and unusable in practice.
         // A drag holds it out for the same reason.
-        target: (!root.autoHide || hover.hovered || root.popupOpen || drag.active || root.debugging) ? 1 : 0
+        // ⚠️ A SEPARATOR RESIZE HOLDS IT OUT TOO. Dragging the divider moves the
+        // pointer toward the screen edge the dock hides into, and without this
+        // the dock slid away underneath the gesture that was resizing it.
+        target: (!root.autoHide || hover.hovered || root.popupOpen || drag.active || sepResize.startEdgeDist >= 0 || gripDrag.active || root.debugging) ? 1 : 0
         // Slower and softer than a menu: the dock is a large, heavy object and
         // should arrive like one. Caelestia's own panels sit near 0.38s.
         response: 0.46 * root._resp
@@ -1073,6 +1102,7 @@ PanelWindow {
 
                 maxIconSize: root.maxIconSize
                 restIconSize: root.baseIconSize
+                launcherIcon: root.launcherIcon
                 entry: item.modelData.entry
                 kind: item.modelData.kind ?? "app"
                 folder: item.modelData.folder ?? ""
@@ -1098,6 +1128,10 @@ PanelWindow {
                 height: root.horizontal ? content.thick - content.edgeGap - content.bgPad : item.iconSize
 
                 onActivated: {
+                    if (item.modelData.kind === "launcher") {
+                        root.launcherActivated();
+                        return;
+                    }
                     if (item.modelData.kind === "folder") {
                         stack.toggleFor(item.modelData.folder, item.x + item.width / 2);
                         return;
@@ -1140,6 +1174,9 @@ PanelWindow {
                     // wherever you put it down. That is the shortest path from
                     // "I use this a lot" to "keep it", and it is the one macOS
                     // offers.
+                    // The launcher is a fixed slot. Dragging it would either
+                    // reorder something that is not in the pinned list or
+                    // remove a control the dock guarantees is there.
                     if (item.modelData.kind !== "app")
                         return;
                     drag.fromIndex = item.index;
@@ -1483,6 +1520,9 @@ PanelWindow {
         onSettingsRequested: root.settingsRequested()
         folderView: root.folderView
         autoHide: root.autoHide
+        recentFolders: root.recentFolders
+        allToplevels: ToplevelManager.toplevels.values
+        onLauncherAction: (a, path) => root.launcherAction(a, path)
         anchors.fill: parent
         bandOffset: root.bandThickness
         revealed: reveal.value
