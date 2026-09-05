@@ -201,10 +201,16 @@ ShellRoot {
                     // number into JSON `null` — the values were right the whole
                     // time and the readout said the geometry was missing.
                     centre: d.itemCentre(i),
-                    cross: d.itemCross()
+                    cross: d.itemCross(),
+                    box: d.itemBox(i),
+                    box: d.itemBox(i),
+                    slot: d.itemSlot(i)
                 });
             }
-            return JSON.stringify(out);
+            return JSON.stringify({
+                items: out,
+                panel: d.panelRect()
+            });
         }
 
         /*! Open the settings window. Also reachable by right-clicking empty
@@ -462,6 +468,15 @@ ShellRoot {
 
             onFoldersUpdated: list => {
                 cfg.folders = list;
+                config.writeAdapter();
+            }
+
+            // ⚠️ PERSISTED, like every other setting the dock asks for. A
+            // right-click toggle that only lives until the next restart is a
+            // worse control than none: it teaches the user the setting does not
+            // stick.
+            onAutoHideRequested: on => {
+                cfg.autoHide = on;
                 config.writeAdapter();
             }
 

@@ -47,8 +47,17 @@ Item {
         across the screen constantly. */
     signal settingsRequested()
 
+    /*! Flip auto-hide. The menu asks; whoever owns the config decides and
+        persists — the same one-way flow the settings panel uses, and the reason
+        a destroyed binding cannot happen here. */
+    signal autoHideRequested(bool on)
+
     /*! Current mode, so the menu can tick the active one. */
     property string folderView: "grid"
+
+    /*! Mirrored so the menu can say "Turn Hiding On" or "Off" rather than
+        offering a toggle whose current state the user has to guess. */
+    property bool autoHide: false
     readonly property bool horizontal: root.edge === Qt.BottomEdge || root.edge === Qt.TopEdge
 
     function openFor(app: var, pos: real): void {
@@ -130,10 +139,19 @@ Item {
                 kind: "quit"
             });
 
+        // Auto-hide belongs here as well as in the settings panel. macOS puts
+        // "Turn Hiding On/Off" in the dock's own context menu because it is the
+        // one dock preference people change often enough to resent opening a
+        // window for — and the panel is two clicks and a window away.
+        out.push({
+            label: root.autoHide ? "Turn Hiding Off" : "Turn Hiding On",
+            kind: "autohide",
+            separated: true
+        });
+
         out.push({
             label: "Dock Settings…",
-            kind: "settings",
-            separated: true
+            kind: "settings"
         });
 
         return out;
@@ -142,6 +160,8 @@ Item {
     function invoke(item: var): void {
         if (item.kind === "settings")
             root.settingsRequested();
+        else if (item.kind === "autohide")
+            root.autoHideRequested(!root.autoHide);
         else if (item.kind === "view")
             root.viewModeRequested(item.mode);
         else if (item.kind === "openFolder")

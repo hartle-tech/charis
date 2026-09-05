@@ -241,6 +241,12 @@ Item {
 
     readonly property bool _leaving: crt.running || burst.running
 
+    /*! The icon's rendered box, for the layout readout. Reported rather than
+        inferred: measuring an icon's size from a screenshot means separating
+        it from a translucent panel over a photograph, and four attempts to do
+        that returned four different wrong answers. */
+    readonly property real boxSize: iconBox.width
+
     readonly property bool _horizontal: root.edge === Qt.BottomEdge || root.edge === Qt.TopEdge
 
     // ── Launch bounce ───────────────────────────────────────────────────

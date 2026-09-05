@@ -448,6 +448,42 @@ PanelWindow {
         return row.restCentre(i);
     }
 
+    /*! The panel's rectangle in the SURFACE's frame, and the numbers it is
+        derived from.
+
+        ⚠️ REPORTED, NOT INFERRED. Four separate attempts to measure this dock's
+        panel from a screenshot picked out a dark run belonging to something
+        else — a window, the wallpaper's shadow, the screen's own border — and
+        each produced a different wrong answer with equal confidence. The dock
+        computes this rectangle; it can simply say what it is. */
+    function panelRect(): var {
+        return {
+            x: bg.x,
+            y: bg.y,
+            w: bg.width,
+            h: bg.height,
+            band: root.band,
+            total: root.layout.total,
+            sizes: root.layout.sizes,
+            magnifyAmount: magnify.value,
+            cursor: cursor.value,
+            hovered: hover.hovered,
+            edge: root.edge,
+            horizontal: root.horizontal
+        };
+    }
+
+    /*! The rendered icon box and the slot it sits in, for item \a i. */
+    function itemBox(i: int): real {
+        const c = rowItems.itemAt(i);
+        return c ? c.boxSize : -1;
+    }
+
+    function itemSlot(i: int): var {
+        const c = rowItems.itemAt(i);
+        return c ? { w: c.width, h: c.height, x: c.x, y: c.y } : null;
+    }
+
     /*! Position across the dock's axis — the middle of the resting band, which
         is where a pointer has to be to hit an icon. Surface frame. */
     function itemCross(): real {
@@ -1265,6 +1301,9 @@ PanelWindow {
     /*! Emitted when the folder view mode is changed from a stack's menu. */
     signal folderViewRequested(string mode)
 
+    /*! The dock asks to be hidden or shown; the config decides. */
+    signal autoHideRequested(bool on)
+
     /*! Right-click on empty dock space. */
     signal settingsRequested()
 
@@ -1416,8 +1455,10 @@ PanelWindow {
         edge: root.edge
         onPinRequested: (key, pinned) => root.setPinned(key, pinned)
         onViewModeRequested: mode => root.folderViewRequested(mode)
+        onAutoHideRequested: on => root.autoHideRequested(on)
         onSettingsRequested: root.settingsRequested()
         folderView: root.folderView
+        autoHide: root.autoHide
         anchors.fill: parent
         bandOffset: root.bandThickness
         revealed: reveal.value
