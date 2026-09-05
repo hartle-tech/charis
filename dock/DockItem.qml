@@ -85,6 +85,37 @@ Item {
     /*! Absolute path, for kind == "folder". */
     property string folder: ""
 
+    /*!
+        Icon name for a folder in the row.
+
+        🔴 A FOLDER USED TO DRAW ABSOLUTELY NOTHING. Both the icon and the
+        letter-tile fallback were gated on `kind === "app"`, so a configured
+        folder took a full slot in the row, magnified with its neighbours,
+        opened its stack when clicked — and was invisible. On screen it read as
+        a gap in the dock right where the dock is widest, which is the single
+        most "unfinished" thing a dock can look like. Directories were in the
+        brief from the first sentence.
+
+        The freedesktop names are used where they exist, because a themed
+        Downloads folder is part of what makes a dock look native rather than
+        drawn by someone who had never seen the desktop it runs on.
+    */
+    readonly property string folderIconName: {
+        const base = root.folder.replace(/\/+$/, "").split("/").pop().toLowerCase();
+        const known = {
+            downloads: "folder-download",
+            download: "folder-download",
+            documents: "folder-documents",
+            pictures: "folder-pictures",
+            music: "folder-music",
+            videos: "folder-videos",
+            desktop: "user-desktop",
+            public: "folder-publicshare",
+            templates: "folder-templates"
+        };
+        return known[base] ?? "folder";
+    }
+
     /*! An image path that replaces this app's icon. Empty uses the app's own.
         A dock full of vendor artwork at six different visual weights is the
         commonest reason people give up on Linux docks looking tidy, and the
@@ -337,6 +368,73 @@ Item {
             sourceSize.height: root.decodeSize
             asynchronous: true
             smooth: true
+        }
+
+        // The folder's own themed icon, resolved and decoded exactly like an
+        // app's so it is as sharp as the rest of the row.
+        Image {
+            id: folderIcon
+            visible: root.kind === "folder" && folderIcon.status === Image.Ready
+            anchors.fill: parent
+            fillMode: Image.PreserveAspectFit
+            // ⚠️ THE `check` OVERLOAD, not the string-fallback one. Asking for
+            // a fallback NAME returns a URL either way, and Quickshell's image
+            // provider answers a name that resolves to nothing with Qt's
+            // magenta checkerboard at status Ready — so the drawn fallback
+            // below never gets its turn and the dock displays the missing
+            // texture. Passing `true` returns an empty string when the icon
+            // genuinely is not there, which is the only answer this can act on.
+            source: root.iconOverride !== "" ? (root.iconOverride.startsWith("/") ? "file://" + root.iconOverride : root.iconOverride) : (Quickshell.iconPath(root.folderIconName, true) || Quickshell.iconPath("folder", true))
+            sourceSize.width: root.decodeSize
+            sourceSize.height: root.decodeSize
+            asynchronous: true
+            smooth: true
+        }
+
+        // ⚠️ A DRAWN FALLBACK, NOT A COLOURED SQUARE.
+        //
+        // `folder` and `folder-download` do not resolve here at all: hicolor
+        // carries application icons and almost no places icons, and Qt's icon
+        // theme name is whatever the platform theme plugin says — which for a
+        // bare Quickshell process started from a systemd unit is nothing. The
+        // system HAS Papirus with both icons in it; Qt simply never looks
+        // there. The log said so plainly:
+        //
+        //     WARN: Could not load icon "folder?fallback=folder"
+        //
+        // and Quickshell's provider answers a failed lookup with Qt's magenta
+        // missing-texture checkerboard, so the dock shipped a magenta square
+        // where the Downloads folder should be.
+        //
+        // Depending on the host's icon theme for something this central is the
+        // wrong trade for a dock that has to look right on every distribution
+        // on first run. The theme is tried first and used when it resolves;
+        // this is what appears when it does not.
+        Item {
+            visible: root.kind === "folder" && folderIcon.status !== Image.Ready && folderIcon.status !== Image.Loading
+            anchors.fill: parent
+
+            // Two offset tiles, so it reads as a stack of things rather than
+            // as a generic icon — which is also what it opens as.
+            Squircle {
+                x: parent.width * 0.10
+                y: parent.height * 0.06
+                width: parent.width * 0.80
+                height: parent.height * 0.74
+                radius: width * 0.2237
+                smoothing: 1
+                fillColor: "#8e93a8"
+                opacity: 0.55
+            }
+            Squircle {
+                x: parent.width * 0.04
+                y: parent.height * 0.20
+                width: parent.width * 0.92
+                height: parent.height * 0.76
+                radius: width * 0.2237
+                smoothing: 1
+                fillColor: "#5b6cc4"
+            }
         }
 
         // 🔴 NO MultiEffect. It used to wrap the icon to add a drop shadow, and
