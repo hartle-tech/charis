@@ -18,6 +18,7 @@ module Charis
 Spring 1.0 Spring.qml
 Squircle 1.0 Squircle.qml
 MagnifiedRow 1.0 MagnifiedRow.qml
+Glass 1.0 Glass.qml
 
 singleton FrameBudget 1.0 FrameBudget.qml
 singleton Ticker 1.0 Ticker.qml

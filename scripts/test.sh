@@ -21,6 +21,14 @@ fail=0
 for dir in "$ROOT"/tests/*/; do
   name=$(basename "$dir")
   [ -z "$SUITE" ] || [ "$SUITE" = "$name" ] || continue
+  # glass-visual needs a REAL GPU context. ShaderEffect renders nothing at all
+  # under QT_QPA_PLATFORM=offscreen — no error, no warning — so including it in
+  # the headless sweep would report a working shader as broken. Run it by name
+  # on a real session instead.
+  if [ "$name" = "glass-visual" ] && [ -z "$SUITE" ]; then
+    echo "── glass-visual ── skipped (needs a GPU context; run it by name)"
+    continue
+  fi
   echo
   echo "── $name ──────────────────────────────────────────"
   out=$(QML2_IMPORT_PATH="$ROOT/qml" QT_QPA_PLATFORM=offscreen \
