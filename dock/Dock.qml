@@ -401,7 +401,7 @@ PanelWindow {
 
     Spring {
         id: magnify
-        target: (hover.hovered || root.debugging) ? 1 : 0
+        target: (root.overBand || root.debugging) ? 1 : 0
         response: 0.28 * root._resp
         damping: 1.0
     }
@@ -410,7 +410,12 @@ PanelWindow {
         id: reveal
         // 1 = fully out, 0 = tucked away. Slightly under-damped so the dock
         // arrives with a hint of settle instead of stopping dead.
-        target: (!root.autoHide || hover.hovered || root.debugging) ? 1 : 0
+        // ⚠️ AN OPEN POPUP HOLDS THE DOCK OUT. A context menu is drawn ABOVE
+        // the band, so travelling to it takes the pointer off the dock — and an
+        // auto-hiding dock would slide away mid-reach, taking the menu with it.
+        // The menu was reachable in principle and unusable in practice.
+        // A drag holds it out for the same reason.
+        target: (!root.autoHide || hover.hovered || root.popupOpen || drag.active || root.debugging) ? 1 : 0
         // Slower and softer than a menu: the dock is a large, heavy object and
         // should arrive like one. Caelestia's own panels sit near 0.38s.
         response: 0.46 * root._resp
@@ -682,7 +687,7 @@ PanelWindow {
         pointer it is currently receiving — and the threshold is low enough that
         it only closes once the dock has genuinely finished leaving.
     */
-    readonly property bool tuckedAway: root.autoHide && !root.debugging && !hover.hovered && reveal.value < 0.005
+    readonly property bool tuckedAway: root.autoHide && !root.debugging && !hover.hovered && !root.popupOpen && reveal.value < 0.005
 
     /*!
         The SURFACE always reserves room for the tear gesture; the INPUT MASK
@@ -755,44 +760,63 @@ PanelWindow {
     color: "transparent"
 
     /*!
-        🔴 THE MAGNIFICATION USED TO FOLLOW THE WHOLE SURFACE'S HOVER, AND THE
-        DOCK GREW WHEN THE POINTER WAS NOWHERE NEAR IT.
+        🔴 THE POINTER'S DISTANCE FROM THE EDGE, NOT A SEPARATE HOVER ITEM.
 
-        The input mask is `bandThickness + whichever popup is open`. Leave a
-        stack open — or open one and never close it — and the mask reaches most
-        of the way up the screen; the pointer at y=648 on a 1152 display was
-        inside it, `hover.hovered` was true, and the row sat permanently rippled
-        around a cursor position it had recorded who-knows-when. `metrics` said
-        `ticking: false, subscribers: 0`: nothing was animating, the spring had
-        settled, at full magnification, and would stay there.
+        Two failures bracket this, and the second was worse than the first.
 
-        Magnification is a response to the pointer being over the DOCK, so it
-        listens to a region that is exactly the dock — not to the surface, which
-        is deliberately much larger for reasons that have nothing to do with
-        hovering.
+        Originally the magnification followed the WHOLE surface's hover. The
+        input mask is `bandThickness + whichever popup is open`, so a stack left
+        open stretched it up the screen and the dock magnified with the pointer
+        nowhere near it — settled at full size, permanently.
+
+        The fix was a separate Item covering just the band, with its own
+        HoverHandler. It stopped reporting hover at all: with the pointer at
+        (1282, 1115), squarely on a 1070..1152 band, `hovered` was false. So the
+        dock stopped magnifying entirely — the icons held their size and only
+        the gaps between them opened up, which is exactly what a magnification
+        with `amount` stuck at 0 looks like — and, because reveal followed that
+        same handler, the dock hid itself the moment the pointer moved onto the
+        resize grip or up toward an open menu. The menu could be opened and
+        never reached.
+
+        Both are answered by asking the question directly. One handler on the
+        surface, and the two things that depend on the pointer ask different
+        questions of it:
+
+          · magnification — is the pointer over the BAND?
+          · reveal — is the pointer anywhere on the dock, INCLUDING the grip
+            just outside the panel and an open popup above it?
+
+        No second item, no stacking order, no input region that can disagree
+        with the thing it is supposed to describe.
     */
-    Item {
-        id: bandArea
-        x: root.horizontal ? 0 : (root.edge === Qt.LeftEdge ? 0 : root.width - root.restExtent)
-        y: root.horizontal ? (root.edge === Qt.BottomEdge ? root.height - root.restExtent : 0) : 0
-        width: root.horizontal ? root.width : root.restExtent
-        height: root.horizontal ? root.restExtent : root.height
+    readonly property real pointerEdgeDistance: {
+        if (!hover.hovered)
+            return Number.MAX_VALUE;
+        const p = hover.point.position;
+        return root.horizontal ? (root.edge === Qt.BottomEdge ? root.height - p.y : p.y) : (root.edge === Qt.RightEdge ? root.width - p.x : p.x);
+    }
 
-        HoverHandler {
-            id: hover
-            onPointChanged: {
-                const p = hover.point.position;
-                cursor.target = root.horizontal ? p.x : p.y;
-            }
-            onHoveredChanged: {
-                if (!hover.hovered)
-                    return;
-                // Enter the row without a swipe across it. Without this the
-                // cursor spring starts from wherever it was left last time and
-                // the whole dock visibly ripples on entry.
-                const p = hover.point.position;
-                cursor.reset(root.horizontal ? p.x : p.y);
-            }
+    /*! The pointer is on the dock itself, rather than merely on its surface. */
+    readonly property bool overBand: hover.hovered && root.pointerEdgeDistance <= root.bandThickness + 8
+
+    /*! Something is open that the pointer has to be able to travel to. */
+    readonly property bool popupOpen: menu.popupExtent > 0 || stack.popupExtent > 0
+
+    HoverHandler {
+        id: hover
+        onPointChanged: {
+            const p = hover.point.position;
+            cursor.target = root.horizontal ? p.x : p.y;
+        }
+        onHoveredChanged: {
+            if (!hover.hovered)
+                return;
+            // Enter the row without a swipe across it. Without this the cursor
+            // spring starts from wherever it was left last time and the whole
+            // dock visibly ripples on entry.
+            const p = hover.point.position;
+            cursor.reset(root.horizontal ? p.x : p.y);
         }
     }
 
