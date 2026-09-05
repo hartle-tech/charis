@@ -79,10 +79,13 @@ Item {
         property real value: 0
         property int decimals: 0
         property string settingKey: ""
+        /*! A line under the track, for a control whose effect is not obvious
+            from its name — or reaches further than its name suggests. */
+        property string hint: ""
         signal settled(real v)
 
         width: parent ? parent.width : 300
-        height: 44
+        height: sl.hint ? 58 : 44
 
         readonly property real frac: (sl.value - sl.from) / Math.max(0.0001, sl.to - sl.from)
 
@@ -93,6 +96,16 @@ Item {
             text: sl.label
             color: root.dim
             font.pixelSize: 11
+        }
+
+        Text {
+            y: 40
+            visible: sl.hint !== ""
+            text: sl.hint
+            color: root.dim
+            font.pixelSize: 10
+            width: sl.width
+            wrapMode: Text.Wrap
         }
         Text {
             anchors.right: parent.right
@@ -438,6 +451,12 @@ Item {
 
             Slider {
                 label: "Backdrop blur"
+                // Named for what it really does. The compositor can be told to
+                // blur behind the dock's surface but not how hard to blur it
+                // there, so this is the system-wide radius — and saying
+                // "Backdrop blur" alone would leave the user to discover that
+                // by noticing their terminal had changed.
+                hint: "Compositor-wide. Changes the blur behind every window, not only the dock."
                 from: 0
                 to: 20
                 value: root.backdropBlur

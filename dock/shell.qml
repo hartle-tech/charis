@@ -179,11 +179,31 @@ ShellRoot {
     // on a Process that has already run does not start it again, so the FIRST
     // change applied and every subsequent one silently did not.
     //
-    // ⚠️ An absolute path, because this process is started by a systemd unit
-    // with no PATH — a bare `hyprctl` is simply not found and the call fails
-    // with nothing logged anywhere.
+    // 🔴 THIS SETS THE COMPOSITOR'S GLOBAL BLUR, NOT THE DOCK'S.
+    //
+    // Hyprland layer rules can turn blur on for a namespace but cannot give it
+    // its own radius, so there is no way to blur harder behind the dock than
+    // behind everything else. That makes this slider a system setting wearing a
+    // dock setting's clothes: moving it changes every blurred surface on the
+    // desktop, and starting the dock silently overwrites whatever the user's
+    // own Hyprland configuration chose.
+    //
+    // It is labelled accordingly in the settings panel. It is not hidden and it
+    // is not pretended away, because a control whose true blast radius is only
+    // discoverable by noticing your terminal changed is worse than one that
+    // says so.
+    //
+    // ⚠️ execDetached, NOT a Process with `running: true`. Re-asserting `running`
+    // on a Process that has already run does not start it again, so the FIRST
+    // change applied and every subsequent one silently did not.
+    //
+    // ⚠️ The systemd unit must put hyprctl on PATH. It used to be an absolute
+    // /nix/store path hard-coded here, which worked on exactly one machine and
+    // made the dock un-shippable to any other distribution — the opposite of
+    // what this project is for. A bare name fails silently if PATH is empty, so
+    // the unit sets it; see modules/home/charis-dock.nix.
     function applyBackdropBlur(): void {
-        Quickshell.execDetached(["/nix/store/lsb8hf3j0pywrbfhgpajj47cndra6zvc-hyprland-0.55.4/bin/hyprctl", "eval", `hl.config({ decoration = { blur = { size = ${Math.round(cfg.backdropBlur)}, passes = ${cfg.backdropBlurPasses} } } })`]);
+        Quickshell.execDetached(["hyprctl", "eval", `hl.config({ decoration = { blur = { size = ${Math.round(cfg.backdropBlur)}, passes = ${cfg.backdropBlurPasses} } } })`]);
     }
 
     // ⚠️ Called explicitly, not driven by a Connections on the adapter.
@@ -250,8 +270,16 @@ ShellRoot {
             // than drawn by us: a compositor already has the backdrop and can
             // blur it for free, whereas a shader would need the screen captured
             // into a texture every frame just to blur what is already there.
-            property real backdropBlur: 8
-            property int backdropBlurPasses: 2
+            // 🔴 8/2 SHIPPED AND IT LOOKED CHEAP. Measured on the running dock,
+            // standard deviation of the wallpaper still visible through the
+            // panel: 15.0 at size 1, 9.9 at 8/2, 0.85 at 20/4. At the old
+            // default the wallpaper's texture was plainly legible through the
+            // dock — blur was on, doing almost nothing, and reading as a flat
+            // dark tint over a busy photograph. Glass that does not actually
+            // diffuse what is behind it is the cheapest-looking thing a dock
+            // can do. 16/3 lands where a real frosted panel does.
+            property real backdropBlur: 16
+            property int backdropBlurPasses: 3
 
             // ── Behaviour ───────────────────────────────────────────────
             property bool animations: true
