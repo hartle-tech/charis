@@ -84,6 +84,26 @@ ShellRoot {
             property real magnification: 1.9
             property bool autoHide: true
             property list<string> folders: []
+
+            // ── Appearance ──────────────────────────────────────────────
+            property real edgeGap: 8
+            property real spacing: 8
+            property real cornerRoundness: 0.28
+            property string panelColor: "#1e1e1e"
+            property real panelOpacity: 0.55
+            property string borderColor: "#1affffff"
+            property real borderWidth: 1
+            property real influenceCells: 2.6
+
+            // ── Material ────────────────────────────────────────────────
+            property bool useGlass: false
+            property real blurAmount: 12
+
+            // ── Behaviour ───────────────────────────────────────────────
+            property bool animations: true
+            property bool resizable: true
+            property string folderView: "grid"
+
             property real debugCursor: -1
         }
     }
@@ -105,6 +125,19 @@ ShellRoot {
             magnification: cfg.magnification
             autoHide: cfg.autoHide
             folders: cfg.folders
+            edgeGap: cfg.edgeGap
+            spacing: cfg.spacing
+            cornerRoundness: cfg.cornerRoundness
+            panelColor: cfg.panelColor
+            panelOpacity: cfg.panelOpacity
+            borderColor: cfg.borderColor
+            borderWidth: cfg.borderWidth
+            influenceCells: cfg.influenceCells
+            useGlass: cfg.useGlass
+            blurAmount: cfg.blurAmount
+            animations: cfg.animations
+            resizable: cfg.resizable
+            folderView: cfg.folderView
             debugCursor: root.magnifyOverride >= 0 ? root.magnifyOverride : cfg.debugCursor
             stackRequest: root.stackRequest
             stackSerial: root.stackSerial
@@ -115,6 +148,21 @@ ShellRoot {
             // trying to write to a file that caller never had.
             onPinnedReordered: order => {
                 cfg.pinned = order;
+                config.writeAdapter();
+            }
+
+            onIconSizeRequested: size => {
+                cfg.iconSize = Math.round(size);
+                config.writeAdapter();
+            }
+
+            onFoldersUpdated: list => {
+                cfg.folders = list;
+                config.writeAdapter();
+            }
+
+            onFolderViewRequested: mode => {
+                cfg.folderView = mode;
                 config.writeAdapter();
             }
 

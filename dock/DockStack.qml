@@ -54,8 +54,22 @@ Item {
         make opening a folder slower than opening the file manager. */
     property int maxItems: 30
 
-    property int columns: 5
-    property real cellSize: 76
+    /*!
+        "grid", "list" or "icons" — the three macOS offers, minus the fan.
+
+        The fan is the memorable one and the worst: it shows a handful of items
+        before running off the top of the screen and degrades into a grid past
+        that anyway. These three are what people actually use.
+    */
+    property string viewMode: "grid"
+
+    readonly property bool isList: root.viewMode === "list"
+    readonly property bool isBig: root.viewMode === "icons"
+
+    property int columns: root.isList ? 1 : (root.isBig ? 4 : 5)
+    property real cellSize: root.isList ? 190 : (root.isBig ? 96 : 76)
+    readonly property real cellHeight: root.isList ? 30 : root.cellSize
+    readonly property real thumbSize: root.isBig ? 56 : 38
 
     readonly property bool horizontal: root.edge === Qt.BottomEdge || root.edge === Qt.TopEdge
 
@@ -109,7 +123,7 @@ Item {
         readonly property real footerH: root.hidden > 0 ? 22 : 0
 
         width: root.columns * root.cellSize + panel.pad * 2
-        height: root.rows * root.cellSize + panel.pad * 2 + panel.footerH + 24
+        height: root.rows * root.cellHeight + panel.pad * 2 + panel.footerH + 24
         visible: grow.value > 0.001
         opacity: grow.value
 
@@ -158,7 +172,7 @@ Item {
                     id: cell
                     required property int index
                     width: root.cellSize
-                    height: root.cellSize
+                    height: root.cellHeight
 
                     readonly property bool isDir: files.get(cell.index, "fileIsDir") ?? false
                     readonly property string fileName: files.get(cell.index, "fileName") ?? ""
@@ -177,11 +191,14 @@ Item {
                     Image {
                         id: thumb
                         visible: cell.isImage
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        anchors.top: parent.top
-                        anchors.topMargin: 8
-                        width: 38
-                        height: 38
+                        anchors.horizontalCenter: root.isList ? undefined : parent.horizontalCenter
+                        anchors.verticalCenter: root.isList ? parent.verticalCenter : undefined
+                        anchors.left: root.isList ? parent.left : undefined
+                        anchors.leftMargin: root.isList ? 8 : 0
+                        anchors.top: root.isList ? undefined : parent.top
+                        anchors.topMargin: root.isList ? 0 : 8
+                        width: root.isList ? 20 : root.thumbSize
+                        height: width
                         fillMode: Image.PreserveAspectCrop
                         clip: true
                         asynchronous: true
@@ -201,26 +218,32 @@ Item {
                     // every file in the stack would be a blank gap.
                     FolderIcon {
                         visible: cell.isDir
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        anchors.top: parent.top
-                        anchors.topMargin: 8
-                        width: 38
-                        height: 38
+                        anchors.horizontalCenter: root.isList ? undefined : parent.horizontalCenter
+                        anchors.verticalCenter: root.isList ? parent.verticalCenter : undefined
+                        anchors.left: root.isList ? parent.left : undefined
+                        anchors.leftMargin: root.isList ? 8 : 0
+                        anchors.top: root.isList ? undefined : parent.top
+                        anchors.topMargin: root.isList ? 0 : 8
+                        width: root.isList ? 20 : root.thumbSize
+                        height: width
                         tint: "#9ab7d8"
                     }
 
                     Item {
                         visible: !cell.isDir && !cell.isImage
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        anchors.top: parent.top
-                        anchors.topMargin: 8
-                        width: 38
-                        height: 38
+                        anchors.horizontalCenter: root.isList ? undefined : parent.horizontalCenter
+                        anchors.verticalCenter: root.isList ? parent.verticalCenter : undefined
+                        anchors.left: root.isList ? parent.left : undefined
+                        anchors.leftMargin: root.isList ? 8 : 0
+                        anchors.top: root.isList ? undefined : parent.top
+                        anchors.topMargin: root.isList ? 0 : 8
+                        width: root.isList ? 20 : root.thumbSize
+                        height: width
 
                         Squircle {
                             anchors.centerIn: parent
-                            width: 27
-                            height: 34
+                            width: parent.width * 0.71
+                            height: parent.height * 0.9
                             radius: 6
                             smoothing: 1
                             fillColor: Qt.rgba(1, 1, 1, 0.86)
@@ -244,19 +267,21 @@ Item {
                     }
 
                     Text {
-                        anchors.bottom: parent.bottom
-                        anchors.bottomMargin: 6
+                        anchors.bottom: root.isList ? undefined : parent.bottom
+                        anchors.bottomMargin: root.isList ? 0 : 6
+                        anchors.verticalCenter: root.isList ? parent.verticalCenter : undefined
                         anchors.left: parent.left
+                        anchors.leftMargin: root.isList ? 34 : 4
                         anchors.right: parent.right
-                        anchors.margins: 4
-                        horizontalAlignment: Text.AlignHCenter
+                        anchors.rightMargin: 4
+                        horizontalAlignment: root.isList ? Text.AlignLeft : Text.AlignHCenter
                         text: cell.fileName
                         color: "white"
                         opacity: 0.85
-                        font.pixelSize: 9
-                        elide: Text.ElideMiddle
-                        maximumLineCount: 2
-                        wrapMode: Text.WrapAnywhere
+                        font.pixelSize: root.isList ? 11 : 9
+                        elide: root.isList ? Text.ElideRight : Text.ElideMiddle
+                        maximumLineCount: root.isList ? 1 : 2
+                        wrapMode: root.isList ? Text.NoWrap : Text.WrapAnywhere
                     }
 
                     HoverHandler {

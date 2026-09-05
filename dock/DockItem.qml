@@ -49,26 +49,90 @@ Item {
 
     readonly property bool isSeparator: root.kind === "separator"
 
+    /*! Dragged far enough out of the dock that releasing will remove it.
+        Shown, not merely tracked — a removal gesture with no feedback until
+        after the fact is how people delete the thing they meant to move. */
+    property bool tornOff: false
+
+    /*! True from the moment an app is launched until its first window appears.
+        Without it, clicking a cold-starting application does nothing visible
+        for several seconds and everyone clicks again — which starts it twice. */
+    property bool launching: false
+
     readonly property bool running: root.toplevels.length > 0
     readonly property string label: root.entry ? (root.entry.name || root.entry.id) : root.fallbackLabel
 
     signal activated
     signal secondaryRequested(real x, real y)
 
-    /*! Emitted while this icon is being dragged along the row, with the
-        pointer's position in the DOCK's coordinates — the caller works in row
-        space, not in this item's. */
-    signal dragMoved(real axisPos)
+    /*! Emitted while this icon is being dragged. `axisPos` is along the row and
+        `crossPos` is perpendicular to it, both in the DOCK's coordinates — the
+        caller works in row space, not in this item's, which moves underneath
+        the drag as the row re-lays-out. */
+    signal dragMoved(real axisPos, real crossPos)
     signal dragStarted
     signal dragEnded
 
     readonly property bool _horizontal: root.edge === Qt.BottomEdge || root.edge === Qt.TopEdge
+
+    // ── Launch bounce ───────────────────────────────────────────────────
+    //
+    // A bounce IS a spring with an impulse, so this is the library's own
+    // primitive rather than a bespoke animation: give it velocity and let the
+    // physics do the arc. Under-damped, so it oscillates instead of gliding
+    // back, which is what makes it read as bouncing.
+    //
+    // The value is clamped to the upward half. An unclamped oscillator swings
+    // symmetrically and the icon would sink THROUGH the dock floor on every
+    // other half-cycle; macOS's icon hops and lands, it never dips.
+    Spring {
+        id: bounce
+        response: 0.34
+        damping: 0.30
+        epsilon: 0.05
+    }
+
+    Timer {
+        id: bouncer
+        interval: 560
+        repeat: true
+        running: root.launching
+        triggeredOnStart: true
+        onTriggered: bounce.impulse(-240)
+    }
+
+    // Stop bouncing whether or not the app ever appeared. An app that fails to
+    // start would otherwise bounce for ever, which is worse than no feedback:
+    // it says "still working" indefinitely.
+    Timer {
+        interval: 12000
+        running: root.launching
+        onTriggered: root.launching = false
+    }
+
+    Spring {
+        id: tearLift
+        target: root.tornOff ? 26 : 0
+        response: 0.3
+        damping: 0.75
+    }
+
+    Spring {
+        id: tearFade
+        target: root.tornOff ? 0.45 : 1
+        response: 0.25
+        damping: 1.0
+        Component.onCompleted: tearFade.reset(1)
+    }
+
+    readonly property real _lift: Math.max(0, -bounce.value) + tearLift.value
 
     Item {
         id: iconBox
 
         width: root.iconSize
         height: root.iconSize
+        opacity: tearFade.value
 
         // Grow from the dock's floor rather than from the centre. An icon that
         // magnifies about its own middle sinks INTO the edge of the screen,
@@ -76,6 +140,12 @@ Item {
         anchors.horizontalCenter: root._horizontal ? parent.horizontalCenter : undefined
         anchors.verticalCenter: root._horizontal ? undefined : parent.verticalCenter
         anchors.bottom: root.edge === Qt.BottomEdge ? parent.bottom : undefined
+
+        // The bounce, pushed away from whichever edge the dock is on.
+        anchors.bottomMargin: root.edge === Qt.BottomEdge ? root._lift : 0
+        anchors.topMargin: root.edge === Qt.TopEdge ? root._lift : 0
+        anchors.leftMargin: root.edge === Qt.LeftEdge ? root._lift : 0
+        anchors.rightMargin: root.edge === Qt.RightEdge ? root._lift : 0
         anchors.top: root.edge === Qt.TopEdge ? parent.top : undefined
         anchors.left: root.edge === Qt.LeftEdge ? parent.left : undefined
         anchors.right: root.edge === Qt.RightEdge ? parent.right : undefined
@@ -253,7 +323,7 @@ Item {
             // as the row re-lays-out underneath the drag, so a position
             // measured in it chases itself.
             const p = dragger.centroid.position;
-            root.dragMoved(root._horizontal ? root.x + p.x : root.y + p.y);
+            root.dragMoved(root._horizontal ? root.x + p.x : root.y + p.y, root._horizontal ? root.y + p.y : root.x + p.x);
         }
     }
 }

@@ -62,6 +62,41 @@ PanelWindow {
     property color panelColor: "#1e1e1e"
     property real panelOpacity: 0.55
 
+    /*! Corner radius of the dock background, as a fraction of its thickness.
+        0.5 is a full pill; macOS sits near 0.28. */
+    property real cornerRoundness: 0.28
+
+    /*! Border colour and width of the dock background. */
+    property color borderColor: "#1affffff"
+    property real borderWidth: 1
+
+    /*! Use the refracting Glass material for the background instead of flat
+        translucency. Needs a `backdrop`; without one it falls back on its own. */
+    property bool useGlass: false
+    property Item backdrop: null
+
+    /*! How hard the glass bends the backdrop at its rim, in pixels. */
+    property real blurAmount: 12
+
+    /*!
+        Master switch for motion. False makes every spring settle instantly.
+
+        Not a cosmetic preference: vestibular disorders make large sliding
+        motion genuinely unpleasant, and the desktop is not a place to make
+        somebody argue for that. Implemented by collapsing the springs' response
+        rather than by branching every animation, so there is no second code
+        path to keep correct.
+    */
+    property bool animations: true
+
+    /*! Let the dock be resized by dragging its outer edge. */
+    property bool resizable: true
+
+    /*! How folder stacks display their contents: "grid", "list" or "icons". */
+    property string folderView: "grid"
+
+    readonly property real _resp: root.animations ? 1 : 0.0001
+
     /*!
         Pin the magnification to a fixed position along the dock, as if the
         pointer were parked there. Negative disables it.
@@ -176,6 +211,30 @@ PanelWindow {
 
     readonly property int count: root.items.length
 
+    /*! Keys whose app was launched from here and has not yet shown a window. */
+    property var launching: ({})
+
+    function beginLaunch(key: string): void {
+        const next = Object.assign({}, root.launching);
+        next[key] = true;
+        root.launching = next;
+    }
+
+    // The moment a launching app owns a toplevel, stop bouncing. Watching the
+    // model rather than a timer is what makes the bounce end exactly when the
+    // window appears instead of a beat before or after it.
+    onItemsChanged: {
+        let changed = false;
+        const next = Object.assign({}, root.launching);
+        for (const it of root.items)
+            if (next[it.key] && it.toplevels.length > 0) {
+                delete next[it.key];
+                changed = true;
+            }
+        if (changed)
+            root.launching = next;
+    }
+
     // ── Geometry ────────────────────────────────────────────────────────
     // Everything below is a pure function of `cursor.value` and `magnify.value`.
 
@@ -184,7 +243,7 @@ PanelWindow {
         // Short and critically damped: magnification must feel like it is
         // attached to the pointer, not chasing it. Anything slower than ~0.12s
         // reads as lag rather than as smoothing.
-        response: 0.12
+        response: 0.12 * root._resp
         damping: 1.0
         epsilon: 0.25
     }
@@ -194,7 +253,7 @@ PanelWindow {
     Spring {
         id: magnify
         target: (hover.hovered || root.debugging) ? 1 : 0
-        response: 0.28
+        response: 0.28 * root._resp
         damping: 1.0
     }
 
@@ -203,7 +262,7 @@ PanelWindow {
         // 1 = fully out, 0 = tucked away. Slightly under-damped so the dock
         // arrives with a hint of settle instead of stopping dead.
         target: (!root.autoHide || hover.hovered || root.debugging) ? 1 : 0
-        response: 0.42
+        response: 0.42 * root._resp
         damping: 0.82
     }
 
@@ -228,9 +287,19 @@ PanelWindow {
     // steals input from whatever the person was typing into the moment the
     // pointer crosses it.
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
-    // Auto-hide means claiming no space. Reserving an exclusive zone AND
-    // hiding gives the worst of both: a permanent gap with nothing in it.
-    exclusionMode: root.autoHide ? ExclusionMode.Ignore : ExclusionMode.Auto
+    // 🔴 NEVER ExclusionMode.Auto HERE. Auto reserves the whole surface, and
+    // this surface deliberately grows when a menu or a stack opens — so every
+    // right-click pushed every window on the screen upwards and dropped them
+    // back when the menu closed. Everything bounced, and it looked like the
+    // dock was fighting the window manager rather than like a reserved-space
+    // bug, because the menu itself animated perfectly.
+    //
+    // The reservation must describe what the dock OCCUPIES, not what its
+    // surface happens to be big enough for. A popup is drawn over the desktop
+    // like any other floating panel; it does not claim space, so windows do
+    // not move at all.
+    exclusionMode: root.autoHide ? ExclusionMode.Ignore : ExclusionMode.Normal
+    exclusiveZone: root.autoHide ? 0 : Math.round(root.restExtent)
 
     anchors {
         bottom: root.edge === Qt.BottomEdge
@@ -252,7 +321,21 @@ PanelWindow {
     // 500px-tall surface across the bottom of the screen would swallow every
     // click in the lower third of the desktop, which is a far worse bug than
     // the one being fixed.
-    readonly property real bandThickness: root.maxIconSize + root.spacing * 3
+    /*! Distance between the screen edge and the dock. 0 sits flush. */
+    property real edgeGap: 8
+
+    /*! Padding between the icons and the dock's background edge. */
+    readonly property real bgPad: root.spacing * 1.5
+
+    /*! Thickness of the dock's background at rest. */
+    readonly property real band: root.baseIconSize + root.bgPad * 2
+
+    /*! What the dock actually occupies at rest, from the screen edge. This is
+        the number the compositor is told to reserve — never the surface size,
+        which is much larger. */
+    readonly property real restExtent: root.edgeGap + root.band
+
+    readonly property real bandThickness: root.maxIconSize + root.bgPad + root.edgeGap
 
     // Exactly the dock at rest; exactly the dock plus the popup while one is
     // open. Two resizes per open/close cycle, because `popupExtent` is gated on
@@ -333,9 +416,9 @@ PanelWindow {
         // which is what keeps a magnified icon from sinking into the screen
         // edge. The background stays at rest size while they do, so the icons
         // rise out of it exactly as Apple's do.
-        readonly property real bgPad: root.spacing * 1.5
-        readonly property real edgeGap: root.spacing
-        readonly property real band: root.baseIconSize + content.bgPad * 2
+        readonly property real bgPad: root.bgPad
+        readonly property real edgeGap: root.edgeGap
+        readonly property real band: root.band
         readonly property real thick: root.bandThickness
         readonly property real bandStart: content.thick - content.edgeGap - content.band
 
@@ -348,12 +431,103 @@ PanelWindow {
             x: root.horizontal ? (content.width - width) / 2 : (root.edge === Qt.LeftEdge ? content.edgeGap : content.bandStart)
             y: root.horizontal ? (root.edge === Qt.BottomEdge ? content.bandStart : content.edgeGap) : (content.height - height) / 2
 
-            radius: Math.min(width, height) * 0.28
+            radius: Math.min(width, height) * root.cornerRoundness
             smoothing: 1
             fillColor: Qt.rgba(root.panelColor.r, root.panelColor.g, root.panelColor.b, root.panelOpacity)
-            strokeColor: Qt.rgba(1, 1, 1, 0.10)
-            strokeWidth: 1
+            strokeColor: root.borderColor
+            strokeWidth: root.borderWidth
             opacity: reveal.value
+            visible: !glassBg.visible
+        }
+
+        // The refracting background. Off by default: it needs a backdrop item
+        // and costs a texture plus a fragment pass, which is real money on
+        // integrated graphics. Bind `useGlass` to taste, not to fashion.
+        Glass {
+            id: glassBg
+            visible: root.useGlass && root.backdrop !== null
+            x: bg.x
+            y: bg.y
+            width: bg.width
+            height: bg.height
+            backdrop: root.backdrop
+            radius: Math.min(width, height) * root.cornerRoundness
+            smoothing: 1
+            refraction: root.blurAmount
+            thickness: Math.max(6, root.blurAmount * 1.4)
+            tint: root.panelColor
+            tintAmount: root.panelOpacity * 0.5
+            opacity: reveal.value
+            enabled: FrameBudget.quality > 0.5
+        }
+
+        // ── Resize grip ─────────────────────────────────────────────────
+        //
+        // Drag the dock's outer edge to resize it, as on macOS. Deliberately
+        // the EDGE and not a separate widget: an affordance that has to be
+        // found first is not the same gesture, and the whole point is that
+        // people already know this one.
+        //
+        // The strip is 6px and sits astride the border, half in and half out.
+        // Entirely inside, it steals clicks from the icons behind it; entirely
+        // outside, it is off the surface and unreachable.
+        Item {
+            id: grip
+
+            visible: root.resizable && reveal.value > 0.9
+            width: root.horizontal ? bg.width : 6
+            height: root.horizontal ? 6 : bg.height
+            x: root.horizontal ? bg.x : (root.edge === Qt.LeftEdge ? bg.x + bg.width - 3 : bg.x - 3)
+            y: root.horizontal ? (root.edge === Qt.BottomEdge ? bg.y - 3 : bg.y + bg.height - 3) : bg.y
+
+            property real startSize: 0
+
+            HoverHandler {
+                id: gripHover
+                cursorShape: root.horizontal ? Qt.SizeVerCursor : Qt.SizeHorCursor
+            }
+
+            // A hairline that only appears on hover — visible enough to say
+            // "this is draggable", quiet enough not to be a permanent line
+            // across the top of the dock.
+            Rectangle {
+                anchors.centerIn: parent
+                width: root.horizontal ? 46 : 3
+                height: root.horizontal ? 3 : 46
+                radius: 1.5
+                color: Qt.rgba(1, 1, 1, gripHover.hovered || gripDrag.active ? 0.45 : 0)
+
+                Behavior on color {
+                    ColorAnimation {
+                        duration: 140
+                    }
+                }
+            }
+
+            DragHandler {
+                id: gripDrag
+                target: null
+                dragThreshold: 2
+
+                onActiveChanged: {
+                    if (gripDrag.active)
+                        grip.startSize = root.baseIconSize;
+                    else
+                        root.iconSizeRequested(root.baseIconSize);
+                }
+
+                onCentroidChanged: {
+                    if (!gripDrag.active)
+                        return;
+                    // Delta from where the drag STARTED, against the size the
+                    // dock had then. Using the live size instead makes the
+                    // gesture compound with itself and the dock runs away from
+                    // the pointer.
+                    const d = root.horizontal ? -(gripDrag.centroid.position.y - gripDrag.centroid.pressPosition.y) : (gripDrag.centroid.position.x - gripDrag.centroid.pressPosition.x);
+                    const dir = (root.edge === Qt.BottomEdge || root.edge === Qt.RightEdge) ? 1 : -1;
+                    root.baseIconSize = Math.max(24, Math.min(128, grip.startSize + d * dir));
+                }
+            }
         }
 
         Repeater {
@@ -370,6 +544,7 @@ PanelWindow {
                 kind: item.modelData.kind ?? "app"
                 folder: item.modelData.folder ?? ""
                 fallbackLabel: item.modelData.label ?? item.modelData.key
+                launching: root.launching[item.modelData.key] === true
                 toplevels: item.modelData.toplevels
                 iconSize: root.layout.sizes[item.index] ?? root.baseIconSize
                 edge: root.edge
@@ -382,6 +557,7 @@ PanelWindow {
                 // baseline; DockItem anchors its icon to whichever end faces
                 // the screen edge, so the icon rests on the baseline and grows
                 // away from it.
+                tornOff: drag.active && drag.fromIndex === item.index && drag.tornOff
                 x: root.horizontal ? (root.layout.offsets[item.index] ?? 0) : (root.edge === Qt.LeftEdge ? content.edgeGap + content.bgPad : 0)
                 y: root.horizontal ? (root.edge === Qt.BottomEdge ? 0 : content.edgeGap + content.bgPad) : (root.layout.offsets[item.index] ?? 0)
                 width: root.horizontal ? item.iconSize : content.thick - content.edgeGap - content.bgPad
@@ -397,8 +573,10 @@ PanelWindow {
 
                     const tls = item.modelData.toplevels;
                     if (tls.length === 0) {
-                        if (item.modelData.entry)
+                        if (item.modelData.entry) {
                             item.modelData.entry.execute();
+                            root.beginLaunch(item.modelData.key);
+                        }
                         return;
                     }
                     // Clicking a running app's icon focuses it; clicking the
@@ -423,8 +601,17 @@ PanelWindow {
                     drag.toIndex = item.index;
                     drag.active = true;
                 }
-                onDragMoved: axisPos => {
-                    if (drag.active)
+                onDragMoved: (axisPos, crossPos) => {
+                    if (!drag.active)
+                        return;
+                    // How far out of the dock, perpendicular to the row. The
+                    // band's own thickness is the natural threshold: anything
+                    // still over the dock is a reorder, anything clear of it is
+                    // a removal, and there is no arbitrary constant to tune.
+                    const bandStart = root.horizontal ? (root.height - root.restExtent) : (root.edge === Qt.LeftEdge ? 0 : root.width - root.restExtent);
+                    const out = root.horizontal ? (root.edge === Qt.BottomEdge ? bandStart - crossPos : crossPos - root.restExtent) : (root.edge === Qt.LeftEdge ? crossPos - root.restExtent : bandStart - crossPos);
+                    drag.tornOff = out > root.band * 0.75;
+                    if (!drag.tornOff)
                         drag.toIndex = root.indexNear(axisPos);
                 }
                 onDragEnded: drag.commit()
@@ -437,6 +624,7 @@ PanelWindow {
         id: drag
 
         property bool active: false
+        property bool tornOff: false
         property int fromIndex: -1
         property int toIndex: -1
 
@@ -447,8 +635,20 @@ PanelWindow {
             }
             const from = drag.fromIndex;
             const to = drag.toIndex;
+            const removed = drag.tornOff;
             drag.reset();
-            if (from === to || from < 0 || to < 0)
+            if (from < 0)
+                return;
+
+            // Dragged clear of the dock and released: unpin it, as on macOS.
+            if (removed) {
+                const it = root.items[from];
+                if (it)
+                    root.setPinned(it.kind === "folder" ? it.folder : it.key, false);
+                return;
+            }
+
+            if (from === to || to < 0)
                 return;
 
             const next = root.pinned.slice();
@@ -463,13 +663,61 @@ PanelWindow {
 
         function reset(): void {
             drag.active = false;
+            drag.tornOff = false;
             drag.fromIndex = -1;
             drag.toIndex = -1;
         }
     }
 
-    /*! Emitted with the new pinned order after a drag. */
+    /*! Emitted with the new pinned list after a drag, a pin or an unpin. */
     signal pinnedReordered(var order)
+
+    /*! Emitted when the resize grip is released, so the size can be persisted.
+        Emitted on RELEASE rather than continuously: writing a config file on
+        every frame of a drag is a hundred writes for one decision. */
+    signal iconSizeRequested(real size)
+
+    /*! Emitted when the folder view mode is changed from a stack's menu. */
+    signal folderViewRequested(string mode)
+
+    /*! Add or remove `key` from the pinned list and publish the result. */
+    /*! Emitted with the new folder list when a stack is added or removed.
+        ⚠️ NOT `foldersChanged` — that is the auto-generated change signal for
+        the `folders` property, and declaring it is a hard load error. */
+    signal foldersUpdated(var list)
+
+    function setPinned(key: string, pinned: bool): void {
+        // A folder lives in `folders`, not `pinned`. Routing it through the
+        // app list would quietly drop it: the key is an absolute path, no
+        // DesktopEntry resolves it, and it would come back as an unlaunchable
+        // tile after the next restart.
+        const fi = root.folders.indexOf(key);
+        if (fi !== -1 || key.startsWith("/")) {
+            if (!pinned && fi !== -1) {
+                const f = root.folders.slice();
+                f.splice(fi, 1);
+                root.foldersUpdated(f);
+            } else if (pinned && fi === -1) {
+                root.foldersUpdated(root.folders.concat([key]));
+            }
+            return;
+        }
+
+        const cur = root.pinned.slice();
+        const i = cur.indexOf(key);
+        if (pinned && i === -1) {
+            // Prefer the desktop entry's own id: a running app's appId is not
+            // always its .desktop id, and pinning the appId would produce an
+            // entry that never resolves to an icon after a restart.
+            const entry = DesktopEntries.byId(key);
+            cur.push(entry ? entry.id : key);
+        } else if (!pinned && i !== -1) {
+            cur.splice(i, 1);
+        } else {
+            return;
+        }
+        root.pinnedReordered(cur);
+    }
 
     /*! Emitted when files are dropped on the dock background rather than on an
         icon — the caller decides whether that means "pin this folder". */
@@ -551,6 +799,7 @@ PanelWindow {
         anchors.fill: parent
         folder: stack.current
         edge: root.edge
+        viewMode: root.folderView
         bandOffset: root.bandThickness
 
         Connections {
@@ -577,6 +826,9 @@ PanelWindow {
     DockMenu {
         id: menu
         edge: root.edge
+        onPinRequested: (key, pinned) => root.setPinned(key, pinned)
+        onViewModeRequested: mode => root.folderViewRequested(mode)
+        folderView: root.folderView
         anchors.fill: parent
         bandOffset: root.bandThickness
         revealed: reveal.value

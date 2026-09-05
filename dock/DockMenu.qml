@@ -33,6 +33,16 @@ Item {
     property real anchorPos: 0
 
     readonly property bool open: root.app !== null
+
+    /*! Ask the dock to pin or unpin `key`. The menu never edits the pinned
+        list itself — it has no idea where that list came from. */
+    signal pinRequested(string key, bool pinned)
+
+    /*! Change how folder stacks display their contents. */
+    signal viewModeRequested(string mode)
+
+    /*! Current mode, so the menu can tick the active one. */
+    property string folderView: "grid"
     readonly property bool horizontal: root.edge === Qt.BottomEdge || root.edge === Qt.TopEdge
 
     function openFor(app: var, pos: real): void {
@@ -50,6 +60,28 @@ Item {
         const out = [];
         const e = root.app.entry;
         const tls = root.app.toplevels;
+
+        // A folder is not an app. Offering it "New Window" and "Quit" would be
+        // noise; what it needs is macOS's "View content as".
+        if (root.app.kind === "folder") {
+            out.push({
+                label: "Open in Files",
+                kind: "openFolder"
+            });
+            for (const m of [["grid", "View as Grid"], ["list", "View as List"], ["icons", "View as Icons"]])
+                out.push({
+                    label: (root.folderView === m[0] ? "✓  " : "     ") + m[1],
+                    kind: "view",
+                    mode: m[0],
+                    separated: m[0] === "grid"
+                });
+            out.push({
+                label: "Remove from Dock",
+                kind: "unpinFolder",
+                separated: true
+            });
+            return out;
+        }
 
         if (e && e.actions)
             for (const a of e.actions)
@@ -76,6 +108,16 @@ Item {
                     toplevel: t
                 });
 
+        // Pin / unpin. This is the entry people look for FIRST on a running
+        // app they have just decided they use every day, and its absence is
+        // the single most conspicuous thing missing from a dock that otherwise
+        // behaves like a dock.
+        out.push({
+            label: root.app.pinned ? "Remove from Dock" : "Keep in Dock",
+            kind: "pin",
+            separated: true
+        });
+
         if (tls.length > 0)
             out.push({
                 label: tls.length > 1 ? "Quit All" : "Quit",
@@ -86,7 +128,15 @@ Item {
     }
 
     function invoke(item: var): void {
-        if (item.kind === "action")
+        if (item.kind === "view")
+            root.viewModeRequested(item.mode);
+        else if (item.kind === "openFolder")
+            Quickshell.execDetached(["xdg-open", root.app.folder]);
+        else if (item.kind === "unpinFolder")
+            root.pinRequested(root.app.folder, false);
+        else if (item.kind === "pin")
+            root.pinRequested(root.app.key, !root.app.pinned);
+        else if (item.kind === "action")
             item.action.execute();
         else if (item.kind === "launch" && root.app.entry)
             root.app.entry.execute();
@@ -170,6 +220,19 @@ Item {
                     required property var modelData
                     width: popup.width - popup.pad * 2
                     height: popup.rowH
+
+                    // A hairline rather than a gap: a separator that costs a
+                    // row of height makes a six-item menu noticeably taller for
+                    // no information.
+                    Rectangle {
+                        visible: row.modelData.separated === true
+                        anchors.top: parent.top
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.margins: 6
+                        height: 1
+                        color: Qt.rgba(1, 1, 1, 0.10)
+                    }
 
                     Squircle {
                         anchors.fill: parent
