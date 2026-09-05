@@ -392,23 +392,47 @@ PanelWindow {
         desktop moves. */
     readonly property real tearZone: 240
 
-    /*! How close to the screen edge the pointer must come to reveal a hidden
-        dock. 4px, i.e. essentially touching it.
+    /*!
+        How close to the screen edge the pointer must come to reveal a hidden
+        dock.
 
-        🔴 THE WHOLE SURFACE USED TO BE THE TRIGGER. The surface is as tall as a
-        fully magnified icon, so a hidden dock sprang out whenever the pointer
-        came within ~140px of the bottom of the screen — which, on a display
-        this size, is most of the way across a window. macOS requires the
-        pointer to actually reach the edge. */
-    readonly property real revealStrip: 4
+        🔴 THE WHOLE SURFACE USED TO BE THE TRIGGER, so a hidden dock sprang out
+        whenever the pointer came within ~140px of the bottom of the screen —
+        most of the way across a window on a display this size. macOS wants the
+        pointer at the edge.
+        ⚠️ 16px rather than the 4 that seems right, because THE SURFACE DOES NOT
+        REACH THE SCREEN EDGE. The compositor reserves a gap (10px here), so the
+        layer surface ends short of the display and the last 10 rows of pixels
+        are unreachable — a 4px strip sat entirely inside that dead zone and the
+        dock could not be revealed by pushing the pointer to the bottom at all.
+        Measured: nothing at y=1143/1146/1151, revealed at y=1137. */
+    readonly property real revealStrip: 16
 
     /*! Fully tucked away: nothing but the trigger strip should accept input. */
     readonly property bool tuckedAway: root.autoHide && !root.debugging && reveal.value < 0.02
 
-    readonly property real liveExtent: root.tuckedAway ? root.revealStrip : root.bandThickness + Math.max(stack.popupExtent, menu.popupExtent, drag.active ? root.tearZone : 0)
+    /*!
+        The SURFACE always reserves room for the tear gesture; the INPUT MASK
+        does not.
 
-    implicitHeight: root.horizontal ? root.liveExtent : 0
-    implicitWidth: root.horizontal ? 0 : root.liveExtent
+        🔴 GROWING THE SURFACE MID-DRAG CANCELS THE POINTER GRAB. Resizing a
+        layer surface makes the compositor re-run enter/leave, which drops the
+        implicit grab a held button had established — measured as a centroid
+        frozen at its press value for an entire 220px gesture while the item
+        index still changed, so the tear-off could never fire and dragging an
+        icon out of the dock silently did nothing.
+        The surface is therefore a constant size and only the mask changes.
+        Input outside the mask is not stolen, and during a grab the compositor
+        keeps delivering motion to the grabbed surface regardless of it — which
+        is the whole reason this split works.
+    */
+    readonly property real surfaceExtent: root.bandThickness + root.tearZone + Math.max(stack.popupExtent, menu.popupExtent)
+
+    /*! What actually accepts input when no button is held. */
+    readonly property real liveExtent: root.tuckedAway ? root.revealStrip : root.bandThickness + Math.max(stack.popupExtent, menu.popupExtent)
+
+    implicitHeight: root.horizontal ? root.surfaceExtent : 0
+    implicitWidth: root.horizontal ? 0 : root.surfaceExtent
 
     mask: Region {
         x: root.horizontal ? 0 : (root.edge === Qt.LeftEdge ? 0 : root.width - root.liveExtent)
@@ -743,13 +767,16 @@ PanelWindow {
                 onDragMoved: (axisPos, crossPos) => {
                     if (!drag.active)
                         return;
-                    // How far the pointer has travelled out of the item, away
-                    // from the screen edge. `crossPos` is in the item's own
-                    // frame, so this is immune to the surface growing under the
-                    // drag — which is exactly what broke it before.
-                    const towardEdge = root.edge === Qt.BottomEdge || root.edge === Qt.RightEdge;
-                    const out = towardEdge ? -crossPos : crossPos - (root.horizontal ? item.height : item.width);
-                    drag.tornOff = out > root.band * 0.75;
+                    // Distance from the screen edge the dock sits on. Both
+                    // coordinates arrive in the window's frame, and the window
+                    // is anchored to that edge and no longer resizes during a
+                    // drag — so this is the one measure the gesture cannot move.
+                    const edgeDist = root.horizontal ? (root.edge === Qt.BottomEdge ? root.height - crossPos : crossPos) : (root.edge === Qt.RightEdge ? root.width - crossPos : crossPos);
+                    // Torn off once the pointer is clear of the dock by half an
+                    // icon. Expressed against what the dock OCCUPIES rather
+                    // than as a tuned constant, so it stays correct at every
+                    // icon size and edge gap.
+                    drag.tornOff = edgeDist > root.restExtent + root.baseIconSize * 0.4;
                     if (!drag.tornOff)
                         drag.toIndex = root.indexNear(axisPos);
                 }

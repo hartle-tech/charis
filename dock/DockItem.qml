@@ -108,17 +108,14 @@ Item {
     /*!
         Emitted while this icon is being dragged.
 
-        `axisPos` is along the row in the DOCK's coordinates, because the caller
-        reorders in row space. `crossPos` is perpendicular and deliberately in
-        THIS ITEM's own frame — how far the pointer is from the item's top edge.
+        Both are in the WINDOW's frame.
 
-        ⚠️ Mixing the two frames is a real bug that shipped for one round. The
-        surface grows while a drag is active (so the pointer keeps producing
-        motion events after it leaves the dock), which moves `content`, which
-        moves the item — so a cross position expressed in surface coordinates
-        JUMPS the instant the drag starts. The jump exceeded the tear-off
-        threshold, and dragging an icon sideways to reorder it silently deleted
-        it instead. A local frame cannot shift underneath the gesture.
+        🔴 NEITHER MAY BE ITEM-LOCAL, and the reason is the opposite of
+        intuition. During a drag the row re-lays-out so the dragged item follows
+        the pointer — which means the pointer never moves RELATIVE TO THE ITEM.
+        Measured: `centroid.position.y` sat at 73.2 for an entire 220px upward
+        gesture while the item's index still marched from 1 to 4. An item-local
+        frame is exactly the one frame that cannot see this gesture.
     */
     signal dragMoved(real axisPos, real crossPos)
 
@@ -435,7 +432,8 @@ Item {
             const p = dragger.centroid.position;
             const q = dragger.centroid.pressPosition;
             root.dragOffset = Qt.point(p.x - q.x, p.y - q.y);
-            root.dragMoved(root._horizontal ? root.x + p.x : root.y + p.y, root._horizontal ? p.y : p.x);
+            const sp = dragger.centroid.scenePosition;
+            root.dragMoved(root._horizontal ? sp.x : sp.y, root._horizontal ? sp.y : sp.x);
         }
     }
 }
