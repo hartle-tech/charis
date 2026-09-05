@@ -123,6 +123,49 @@ QtObject {
     /*! True when the machine has been struggling long enough to be believed. */
     readonly property bool stressed: root._quality < 0.9
 
+    /*!
+        \section2 Frame tracing
+
+        Records every frame delta, in milliseconds, for as long as it is on.
+
+        🔴 WHY THIS HAD TO EXIST. "The animation has no weight, it is not
+        smooth" is a real complaint and it was unanswerable, because the only
+        instrument to hand was a screen recorder — and a screen recorder is not
+        one. `wf-recorder` at `-r 120` on a 3414×438 region pushes captured
+        frames through an `fps` filter that DUPLICATES them to reach the
+        requested rate, so the file always has 120 frames per second and the
+        icon's position changes in every fourth one. That measures the capture
+        pipeline, not the dock, and it cannot tell 28 Hz of rendering from 28 Hz
+        of screen-grabbing.
+
+        The dock knows its own frame times. It is the only thing that does. This
+        hands them over.
+
+        Off by default and costing one branch per frame when off: a permanently
+        recording profiler in a shell component is the same mistake as the
+        always-on FrameAnimation this file already describes.
+
+        \qml
+        FrameBudget.startTrace();
+        // … drive the interaction …
+        console.log(FrameBudget.stopTrace());   // "[6.94,6.95,6.93,…]"
+        \endqml
+    */
+    property bool tracing: false
+    property var _trace: []
+
+    /*! Begin recording frame deltas, discarding anything from a previous run. */
+    function startTrace(): void {
+        root._trace = [];
+        root.tracing = true;
+    }
+
+    /*! Stop recording and return the deltas as a JSON array of milliseconds. */
+    function stopTrace(): string {
+        root.tracing = false;
+        return JSON.stringify(root._trace);
+    }
+
     // Rolling window of recent frame times. Half a second at 60 Hz, a quarter
     // at 144 — long enough to be stable, short enough to react within one
     // interaction rather than after it.
@@ -176,6 +219,12 @@ QtObject {
         // machine overloaded for the next half second of healthy frames.
         if (dt <= 0 || dt > 0.5)
             return;
+
+        // Capped, so a trace left running cannot grow without bound in a
+        // process that is meant to outlive every application on the desktop.
+        // 6000 frames is 40s at 144Hz, far longer than any interaction.
+        if (root.tracing && root._trace.length < 6000)
+            root._trace.push(Math.round(dt * 1e6) / 1e3);
 
         const w = root._window;
         w.push(dt);

@@ -313,6 +313,83 @@ Item {
         }
     }
 
+    /*!
+        A colour control that is a row of swatches plus a live hex field.
+
+        🔴 THE DOCK'S COLOURS WERE CONFIG-ONLY AND THAT COUNTED AS "you can
+        modify the appearance". They could be changed by editing JSON in a text
+        editor, which is not a setting a person has; it is a setting the
+        program has. The operator asked for background, style and COLOURS and
+        the panel offered opacity and roundness.
+
+        Swatches rather than a colour wheel, deliberately. A dock's panel is
+        seen behind other people's artwork at 55% opacity — the useful choices
+        are a handful of neutrals plus the accent, and a full picker invites
+        a magenta dock that looks broken. The hex field is there for anyone who
+        disagrees, which is the right shape for a default: easy to do the sane
+        thing, possible to do anything.
+    */
+    component Swatches: Item {
+        id: sw
+        required property string label
+        property string value: "#1e1e1e"
+        property var options: []
+        signal settled(string v)
+
+        width: parent ? parent.width : 300
+        height: 52
+
+        Text {
+            y: 2
+            text: sw.label
+            color: root.dim
+            font.pixelSize: 11
+        }
+        Text {
+            anchors.right: parent.right
+            y: 2
+            text: sw.value
+            color: root.text
+            font.pixelSize: 10
+            font.family: "monospace"
+        }
+
+        Row {
+            y: 20
+            spacing: 6
+
+            Repeater {
+                model: sw.options
+
+                Item {
+                    id: chip
+                    required property var modelData
+                    // Compared case-insensitively: a hex written by hand is as
+                    // likely to be #1E1E1E as #1e1e1e, and a swatch that never
+                    // shows as selected reads as a control that does nothing.
+                    readonly property bool on: sw.value.toLowerCase() === String(chip.modelData).toLowerCase()
+                    width: 26
+                    height: 26
+
+                    Squircle {
+                        anchors.fill: parent
+                        radius: 8
+                        smoothing: 1
+                        fillColor: chip.modelData
+                        strokeColor: chip.on ? root.accent : "#3a3a44"
+                        strokeWidth: chip.on ? 2 : 1
+                    }
+                    TapHandler {
+                        onTapped: {
+                            sw.value = chip.modelData;
+                            sw.settled(sw.value);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     component Heading: Text {
         color: root.dim
         font.pixelSize: 10
@@ -430,6 +507,23 @@ Item {
 
             Heading {
                 text: "Appearance"
+            }
+
+            Swatches {
+                label: "Background colour"
+                options: ["#1e1e1e", "#101014", "#2a2320", "#1b2430", "#202a20", "#f2f2f4"]
+                value: root.dock.panelColor.toString().substring(0, 7)
+                onSettled: v => { root.changed("panelColor", v); root.committed("panelColor", v); }
+            }
+
+            Swatches {
+                label: "Border colour"
+                // With alpha: the dock's rim is a hairline of light over
+                // whatever is behind it, and an opaque border reads as a box
+                // drawn around the dock rather than as an edge catching light.
+                options: ["#1affffff", "#33ffffff", "#00000000", "#40000000", "#336f9ceb"]
+                value: root.dock.borderColor.toString()
+                onSettled: v => { root.changed("borderColor", v); root.committed("borderColor", v); }
             }
 
             Slider {

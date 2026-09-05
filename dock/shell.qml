@@ -67,6 +67,23 @@ ShellRoot {
             });
         }
 
+        /*!
+            Start and stop a frame-time trace, and hand back every delta.
+
+            The only honest answer to "is the motion smooth" from outside the
+            process. A screen recorder cannot answer it: wf-recorder pushes
+            captured frames through an `fps` filter that duplicates them to
+            reach the requested rate, so it reports its own capture cadence no
+            matter what the dock is doing.
+        */
+        function traceStart(): void {
+            FrameBudget.startTrace();
+        }
+
+        function traceStop(): string {
+            return FrameBudget.stopTrace();
+        }
+
         /*! Tell FrameBudget the real refresh rate, so `pressure` is measured
             against this display's budget rather than the 60Hz default. */
         function setRefresh(hz: real): void {
