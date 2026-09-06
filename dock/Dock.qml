@@ -499,6 +499,16 @@ PanelWindow {
         damping: 1.0
     }
 
+    Connections {
+        target: reveal
+        function onValueChanged(): void {
+            if (reveal.value > root.revealMax)
+                root.revealMax = reveal.value;
+            if (reveal.value < root.revealMin)
+                root.revealMin = reveal.value;
+        }
+    }
+
     Spring {
         id: reveal
         // 1 = fully out, 0 = tucked away. Slightly under-damped so the dock
@@ -987,6 +997,12 @@ PanelWindow {
     */
     property var hoverLog: []
 
+    /*! The extremes the reveal spring has reached since the log was cleared.
+        The overshoot is what put a flash on the top border; a number is the
+        only way to say whether it is still there. */
+    property real revealMax: 0
+    property real revealMin: 1
+
     /*! Longest gap between a leave and the enter that followed it, in ms.
         The number the tail has to beat; if it ever approaches the tail's own
         interval, the rule is about to start failing. */
@@ -1086,8 +1102,21 @@ PanelWindow {
     /*! The pointer is on the dock itself, rather than merely on its surface. */
     readonly property bool overBand: root.pointerPresent && root.pointerEdgeDistance <= root.bandThickness + 8
 
+    /*! The dock's settings window is on screen.
+
+        🔴 AN AUTO-HIDING DOCK THAT HIDES WHILE YOU ARE CONFIGURING IT IS
+        UNUSABLE. The settings panel is a separate overlay surface, so opening
+        it takes the pointer off the dock and the dock — correctly, by its own
+        rule — tucks away. Every slider then adjusts something invisible: icon
+        size, padding, magnification, the edge itself, all of them changes you
+        can only judge by looking at the thing you can no longer see.
+
+        Set by whoever owns the window, for the same reason the auto-hide
+        toggle is: the dock is told, it does not guess. */
+    property bool settingsOpen: false
+
     /*! Something is open that the pointer has to be able to travel to. */
-    readonly property bool popupOpen: menu.popupExtent > 0 || stack.popupExtent > 0
+    readonly property bool popupOpen: menu.popupExtent > 0 || stack.popupExtent > 0 || root.settingsOpen
 
     HoverHandler {
         id: hover
@@ -1144,12 +1173,31 @@ PanelWindow {
 
         // Slide out of the screen edge when hidden, leaving a sliver to catch
         // the pointer on.
+        //
+        // 🔴 CLAMPED, BECAUSE THE SPRING OVERSHOOTS AND THE PANEL HAS SOMEWHERE
+        // IT BELONGS. `reveal` is a spring at damping 0.78, which is
+        // underdamped by design — that is what gives the dock its weight on the
+        // way out. An underdamped spring passes its target: at this ratio the
+        // first peak is exp(-πζ/√(1-ζ²)) ≈ 1.02, so the panel travelled about
+        // three pixels ABOVE its resting position and snapped back. On a dark
+        // band with a bright bevel hairline along its top edge, three pixels in
+        // one frame is not a bounce, it reads as a flash — reported as "a
+        // quirky flash at the dock's top border" when the dock is revealed and
+        // the cursor moves up. The same spring undershoots on the way in;
+        // `reveal` has been logged at -0.01.
+        //
+        // The spring keeps its overshoot, because the easing is what makes the
+        // dock feel heavy, and the OPACITY still rides the raw value. Only the
+        // travel is clamped: a panel that is fully out has nowhere further to
+        // go.
+        readonly property real slide: Math.max(0, Math.min(1, reveal.value))
+
         readonly property real hidden: root.bandThickness - 3
         readonly property real bandOrigin: root.horizontal ? (root.edge === Qt.BottomEdge ? root.height - root.bandThickness : 0) : 0
         readonly property real bandOriginX: root.horizontal ? 0 : (root.edge === Qt.RightEdge ? root.width - root.bandThickness : 0)
 
-        y: content.bandOrigin + (root.edge === Qt.BottomEdge ? (1 - reveal.value) * content.hidden : (root.edge === Qt.TopEdge ? -(1 - reveal.value) * content.hidden : 0))
-        x: content.bandOriginX + (root.edge === Qt.RightEdge ? (1 - reveal.value) * content.hidden : (root.edge === Qt.LeftEdge ? -(1 - reveal.value) * content.hidden : 0))
+        y: content.bandOrigin + (root.edge === Qt.BottomEdge ? (1 - content.slide) * content.hidden : (root.edge === Qt.TopEdge ? -(1 - content.slide) * content.hidden : 0))
+        x: content.bandOriginX + (root.edge === Qt.RightEdge ? (1 - content.slide) * content.hidden : (root.edge === Qt.LeftEdge ? -(1 - content.slide) * content.hidden : 0))
 
         // ── Where the icon row rests ────────────────────────────────────
         //

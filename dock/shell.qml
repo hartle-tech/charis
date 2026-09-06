@@ -230,6 +230,8 @@ ShellRoot {
                 return "{}";
             return JSON.stringify({
                 longestBlink: d.longestBlink,
+                revealMax: d.revealMax,
+                revealMin: d.revealMin,
                 events: d.hoverLog
             });
         }
@@ -239,6 +241,8 @@ ShellRoot {
             if (d) {
                 d.hoverLog = [];
                 d.longestBlink = 0;
+                d.revealMax = 0;
+                d.revealMin = 1;
                 // ⚠️ And the pending leave, or the first enter after a clear is
                 // timed against a departure from before it — which reported a
                 // 16.7-second "blink" and made the readout call a healthy rule
@@ -579,6 +583,10 @@ ShellRoot {
             iconSize: cfg.iconSize
             magnify: cfg.magnify
             iconPadding: cfg.iconPadding
+            // Told, not guessed: the settings window is a separate overlay
+            // surface, so opening it takes the pointer off the dock and an
+            // auto-hiding dock would tuck away while you configure it.
+            settingsOpen: root.settingsOpen
             magnification: cfg.magnification
             autoHide: cfg.autoHide
             folders: cfg.folders
