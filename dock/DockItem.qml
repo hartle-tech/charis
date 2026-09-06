@@ -224,6 +224,11 @@ Item {
         for several seconds and everyone clicks again — which starts it twice. */
     property bool launching: false
 
+    /*! What this item's artwork resolved to, and whether it loaded. Reported
+        through the dock's `layout` IPC — see Dock.itemIcon. */
+    readonly property string iconSource: String(root.kind === "folder" ? folderIcon.source : root.kind === "launcher" ? launcherImg.source : icon.source)
+    readonly property bool iconReady: (root.kind === "folder" ? folderIcon.status : root.kind === "launcher" ? launcherImg.status : icon.status) === Image.Ready
+
     readonly property bool running: root.toplevels.length > 0
     readonly property string label: root.entry ? (root.entry.name || root.entry.id) : root.fallbackLabel
 

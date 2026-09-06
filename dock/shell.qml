@@ -203,6 +203,8 @@ ShellRoot {
                     // number into JSON `null` — the values were right the whole
                     // time and the readout said the geometry was missing.
                     centre: d.itemCentre(i),
+                    icon: d.itemIcon(i),
+                    iconOk: d.itemIconOk(i),
                     cross: d.itemCross(),
                     box: d.itemBox(i),
                     box: d.itemBox(i),

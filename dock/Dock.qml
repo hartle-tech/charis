@@ -332,7 +332,7 @@ PanelWindow {
                 key: "__launcher"
             });
 
-        for (const id of root.pinned) {
+        for (const id of root.pinnedClean) {
             const entry = DesktopEntries.byId(id) ?? null;
             // Match on the entry's own id AND on StartupWMClass: an app whose
             // .desktop is `org.gnome.Loupe` can perfectly well set appId to
@@ -582,11 +582,37 @@ PanelWindow {
         };
     }
 
+    /*! What item \a i resolved its artwork to, and whether that artwork
+        loaded.
+
+        🔴 THREE GUESSES WERE MADE ABOUT WHY TWO ICONS WERE LETTER TILES —
+        a missing theme, a missing size, a missing plugin — and the files were
+        present every time. The dock knows exactly which URL it asked for and
+        exactly what Image said about it; asking is not a debug hook, it is the
+        difference between a diagnosis and a theory. */
+    function itemIcon(i: int): string {
+        const c = rowItems.itemAt(i);
+        return c ? String(c.iconSource) : "";
+    }
+
+    function itemIconOk(i: int): bool {
+        const c = rowItems.itemAt(i);
+        return c ? c.iconReady : false;
+    }
+
     /*! The rendered icon box and the slot it sits in, for item \a i. */
     function itemBox(i: int): real {
         const c = rowItems.itemAt(i);
         return c ? c.boxSize : -1;
     }
+
+    /*! The pinned list with anything unusable removed.
+
+        A config written by a version that did not refuse `undefined` still has
+        it, and the dock must not need the operator to hand-edit JSON to get rid
+        of two tiles it should never have drawn. Filtered on the way in, and
+        written back the next time the list is saved for any reason. */
+    readonly property var pinnedClean: (root.pinned ?? []).filter(k => root._usableId(k))
 
     function itemSlot(i: int): var {
         const c = rowItems.itemAt(i);
@@ -1603,7 +1629,7 @@ PanelWindow {
                 if (!it)
                     return;
                 const id = it.pinId ?? it.key;
-                const next = root.pinned.slice();
+                const next = root.pinnedClean.slice();
                 // `to` indexes the whole row — pinned apps, then running ones,
                 // then the separator and folders — so it has to be clamped into
                 // the pinned list's own range before it means anything there.
@@ -1615,7 +1641,7 @@ PanelWindow {
             if (from === to || to < 0)
                 return;
 
-            const next = root.pinned.slice();
+            const next = root.pinnedClean.slice();
             const [moved] = next.splice(from, 1);
             next.splice(to, 0, moved);
             // The dock does not own the config — it asks. Whoever supplied
@@ -1661,7 +1687,29 @@ PanelWindow {
         the `folders` property, and declaring it is a hard load error. */
     signal foldersUpdated(var list)
 
+    /*! Is this something we can put in the pinned list and find again? */
+    function _usableId(key: var): bool {
+        return typeof key === "string" && key.length > 0 && key !== "undefined" && key !== "null";
+    }
+
     function setPinned(key: string, pinned: bool): void {
+        // 🔴 THE STRING "undefined" GOT WRITTEN INTO THE PINNED LIST. TWICE.
+        // A running application with no matching `.desktop` has no key, and
+        // both routes that pin something — the menu's "Keep in Dock" and
+        // dropping an unpinned running app back onto the row — passed that
+        // straight through. QML stringifies it on the way into JSON, so the
+        // config came back with `"pinned": [… "undefined", "undefined", …]`,
+        // and every restart since drew two tiles lettered U that no click could
+        // ever launch and no menu could remove, because unpinning them looks up
+        // a key that never matched anything in the first place.
+        //
+        // Refused here rather than at each call site: this is the only function
+        // that writes the list, so this is the only place that can be sure.
+        if (!root._usableId(key)) {
+            console.warn("charis-dock: refusing to pin an item with no id —", key);
+            return;
+        }
+
         // A folder lives in `folders`, not `pinned`. Routing it through the
         // app list would quietly drop it: the key is an absolute path, no
         // DesktopEntry resolves it, and it would come back as an unlaunchable
@@ -1678,7 +1726,7 @@ PanelWindow {
             return;
         }
 
-        const cur = root.pinned.slice();
+        const cur = root.pinnedClean.slice();
         const i = cur.indexOf(key);
         if (pinned && i === -1) {
             // Prefer the desktop entry's own id: a running app's appId is not
@@ -1702,7 +1750,7 @@ PanelWindow {
     function indexNear(axisPos: real): int {
         let best = 0;
         let bestD = Infinity;
-        const pinnedCount = root.pinned.length;
+        const pinnedCount = root.pinnedClean.length;
         for (let i = 0; i < pinnedCount; i++) {
             const d = Math.abs(row.restCentre(i) - axisPos);
             if (d < bestD) {
