@@ -994,29 +994,28 @@ PanelWindow {
         // out for ever. And a dock held out while the pointer sits on the
         // screen edge is not a compromise — that is the reveal strip's own
         // behaviour.
-        // 🔴 ONE NUMBER, CHOSEN FROM THE LOG RATHER THAN FROM AN ARGUMENT.
+        // 🔴 TWO BRANCHES, AND THE LOG CHOSE BOTH NUMBERS.
         //
-        // Three rules came before this and each was a guess about WHERE the
-        // pointer was when hover vanished: 220ms flat, then 1500ms within 3px
-        // of the border, then 6000ms anywhere inside the input mask. The dock's
-        // own hover log settled it. Driving the two gestures that misbehave,
-        // every spurious loss looked like this:
+        // A flat 400ms was tried first, on the theory that a blink returns fast
+        // and a departure never does. Flattening it is what finally MEASURED
+        // the blink, because the previous six-second hold had been covering it:
         //
-        //   +2181ms leave dist= 92.2   +2243ms enter    (57ms)
-        //   +7152ms leave dist=103.0   +7209ms enter    (57ms)
-        //  +12031ms leave dist= 94.6  +12089ms enter    (58ms)
+        //   +24033ms leave dist=0.5  reveal=0.44   +24722ms enter  (689ms)
+        //   +24828ms leave dist=0.5  reveal=0.42   +25529ms enter  (701ms)
         //
-        // The distances are 67 to 103 of a 117-deep mask, so no threshold
-        // separates them from a departure at ~117 by more than fourteen
-        // pixels — a rule that thin is a rule waiting to be wrong. What DOES
-        // separate them is time: a blink comes back in under 80ms and a
-        // departure never comes back. That is exactly what a tail measures, so
-        // the tail is the whole rule and its length is the only question.
+        // Seven hundred milliseconds, with the pointer sitting on the screen's
+        // last row — and the reveal already half way down by the time it came
+        // back. No tail short enough to hide promptly can ride that out, so
+        // duration alone cannot be the whole rule.
         //
-        // 400ms is five times the longest blink observed and short enough that
-        // hiding still reads as immediate — macOS has a comparable delay before
-        // its own dock slides away.
-        interval: 400
+        // What separates those from a real departure is unambiguous in the same
+        // log: the blinks are at dist 0.5 to 2.4, the departures at 67 of a
+        // 117-deep mask. The pointer cannot leave through the bottom of the
+        // display — there is nowhere below it — so a hover lost against the
+        // border is never a departure and the dock can hold on for as long as
+        // it likes. Anywhere else, 400ms: long enough for an ordinary blink,
+        // short enough that hiding still reads as immediate.
+        interval: root._lastEdgeDistance <= 10 ? 6000 : 400
         repeat: false
     }
 

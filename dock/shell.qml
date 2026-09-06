@@ -237,6 +237,11 @@ ShellRoot {
             if (d) {
                 d.hoverLog = [];
                 d.longestBlink = 0;
+                // ⚠️ And the pending leave, or the first enter after a clear is
+                // timed against a departure from before it — which reported a
+                // 16.7-second "blink" and made the readout call a healthy rule
+                // about to fail.
+                d._leftAt = 0;
             }
         }
 
