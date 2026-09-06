@@ -859,10 +859,9 @@ PanelWindow {
 
         Whatever the compositor is doing on its last row, the dock has no
         business believing it. A pointer does not leave a dock and come back
-        thirty times a second, so a hover that blinks off for a moment is a lie
-        about the world and the dock should ride through it. 220ms is longer
-        than any blink observed here and shorter than the pause before someone
-        who has genuinely left would notice the dock still up.
+        thirty times a second, so a hover that blinks off is a lie about the
+        world and the dock rides through it — for how long is decided by WHERE
+        it was lost, which is the whole trick; see \c hoverTail.
 
         This is also what makes travelling to a menu survive: it is the same
         problem with a different cause, and the same answer.
@@ -871,7 +870,26 @@ PanelWindow {
 
     Timer {
         id: hoverTail
-        interval: 220
+
+        // 🔴 220ms WAS NOT ENOUGH, AND THE REASON SAYS WHICH NUMBER IS RIGHT.
+        // On the last row the hover does not blink for a frame — it goes away
+        // for stretches of half a second at a time while the pointer moves, and
+        // the reveal spring, sampled through one of those, had fallen to 0.4.
+        //
+        // Rather than pick a bigger number and hope, ask WHERE the pointer was
+        // when it vanished. Leaving a dock means moving AWAY from the edge it
+        // lives on, which loses hover at a distance of at least the band. A
+        // hover lost with the pointer one pixel from the screen's own border is
+        // not a departure — there is nowhere further to go. So that case gets a
+        // long hold and every other case keeps the short one, and the dock
+        // still hides promptly when you actually leave.
+        //
+        // Bounded rather than indefinite: a pointer that leaves fast enough for
+        // its last sample to land on the border would otherwise hold the dock
+        // out for ever. And a dock held out while the pointer sits on the
+        // screen edge is not a compromise — that is the reveal strip's own
+        // behaviour.
+        interval: root._lastEdgeDistance <= 3 ? 1500 : 220
         repeat: false
     }
 
