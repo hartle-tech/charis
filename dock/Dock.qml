@@ -889,7 +889,21 @@ PanelWindow {
         // out for ever. And a dock held out while the pointer sits on the
         // screen edge is not a compromise — that is the reveal strip's own
         // behaviour.
-        interval: root._lastEdgeDistance <= 3 ? 1500 : 220
+        // 1500ms was still not enough: one gap in a 22-step slide outlasted it
+        // and the dock retracted once. The gaps are not bounded by anything the
+        // dock can see, so the hold must not be a race against them.
+        //
+        // Six seconds, and it costs nothing, because of WHERE it applies.
+        // Leaving this dock is not a hover loss at the border — the surface is
+        // nearly the whole screen when revealed, so walking off the dock upward
+        // keeps the pointer on the surface until it exits a 249px mask and the
+        // latched distance is then ~249, which takes the 220ms branch and hides
+        // promptly. The only way to lose hover one pixel from the bottom of the
+        // display is to still be sitting on it: the pointer cannot go further
+        // down, and on a single output it cannot go sideways off the screen
+        // either. A dock held out while the pointer rests against the edge it
+        // hides into is not a compromise — that is what the reveal strip is.
+        interval: root._lastEdgeDistance <= 8 ? 6000 : 220
         repeat: false
     }
 
