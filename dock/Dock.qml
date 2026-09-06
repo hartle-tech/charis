@@ -962,7 +962,9 @@ PanelWindow {
             t: now,
             e: kind,
             gap: gap,
-            dist: Math.round(d * 10) / 10,
+            // ⚠️ MAX_VALUE * 10 is Infinity and JSON renders that as null,
+            // which crashed the reader rather than telling it "no pointer".
+            dist: isFinite(d) ? Math.round(d * 10) / 10 : -1,
             reveal: Math.round(reveal.value * 100) / 100,
             live: Math.round(root.liveExtent),
             tail: hoverTail.interval,

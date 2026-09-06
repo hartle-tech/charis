@@ -186,9 +186,21 @@ QtObject {
             let mag = offsets[0];
             const p = root.pointer;
             if (p <= rest) {
-                // Before the row: no interpolation to do, the whole row moves
-                // with its first edge.
-                shift = 0;
+                // 🔴 BEFORE THE ROW THE SHIFT MUST STILL BE THE ROW'S, NOT ZERO.
+                // Zero here means "stay centred", and the anchored layout is
+                // nowhere near centred once the icons have grown — so crossing
+                // the first item's leading edge stepped the whole row sideways
+                // by half of however much it had expanded. At 128px icons that
+                // is about 170 pixels, in one frame, every time the pointer
+                // swept in from the left past the first icon. Reported as the
+                // dock being "aggressively nudged to the right, like a
+                // typewriter", and it is a discontinuity in this function
+                // rather than anything in the animation.
+                //
+                // Slope 1 outside the row, at both ends: the map is then
+                // continuous everywhere, and at the boundary it agrees exactly
+                // with the first cell's f = 0 case.
+                shift = rest - mag;
             } else {
                 let placed = false;
                 for (let i = 0; i < root.count && !placed; i++) {
