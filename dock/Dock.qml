@@ -940,11 +940,28 @@ PanelWindow {
     */
     property var hoverLog: []
 
+    /*! Longest gap between a leave and the enter that followed it, in ms.
+        The number the tail has to beat; if it ever approaches the tail's own
+        interval, the rule is about to start failing. */
+    property real longestBlink: 0
+    property real _leftAt: 0
+
     function _noteHover(kind: string, d: real): void {
+        const now = Date.now();
+        let gap = -1;
+        if (kind === "leave") {
+            root._leftAt = now;
+        } else if (root._leftAt > 0) {
+            gap = now - root._leftAt;
+            if (gap > root.longestBlink)
+                root.longestBlink = gap;
+            root._leftAt = 0;
+        }
         const l = root.hoverLog.length > 199 ? root.hoverLog.slice(-199) : root.hoverLog.slice();
         l.push({
-            t: Date.now(),
+            t: now,
             e: kind,
+            gap: gap,
             dist: Math.round(d * 10) / 10,
             reveal: Math.round(reveal.value * 100) / 100,
             live: Math.round(root.liveExtent),
@@ -975,26 +992,29 @@ PanelWindow {
         // out for ever. And a dock held out while the pointer sits on the
         // screen edge is not a compromise — that is the reveal strip's own
         // behaviour.
-        // 🔴 THE TEST IS "COULD THE POINTER HAVE LEFT FROM THERE", NOT A
-        // DISTANCE. An 8px rule fixed the screen's last row and left the rest:
-        // the dock still hid at random while the pointer was ON it, moving down
-        // toward the edge, because a spurious hover loss halfway up the band
-        // latched a distance of forty-something and took the short branch.
+        // 🔴 ONE NUMBER, CHOSEN FROM THE LOG RATHER THAN FROM AN ARGUMENT.
         //
-        // The pointer can only leave the dock through the edge of its INPUT
-        // MASK. Revealed, that mask is `bandThickness` deep, so a genuine
-        // departure is a hover lost at a distance of about that. Tucked away it
-        // is the 16px trigger strip, and a departure is a loss at about 16. A
-        // loss well INSIDE whichever mask is current cannot be a departure —
-        // there is nowhere for the pointer to have gone — so it is the
-        // compositor blinking and the dock holds on.
+        // Three rules came before this and each was a guess about WHERE the
+        // pointer was when hover vanished: 220ms flat, then 1500ms within 3px
+        // of the border, then 6000ms anywhere inside the input mask. The dock's
+        // own hover log settled it. Driving the two gestures that misbehave,
+        // every spurious loss looked like this:
         //
-        // Six seconds for that case, because the gaps are not bounded by
-        // anything the dock can observe and a hold that races them loses
-        // eventually. It costs nothing: a real departure crosses the mask edge
-        // and takes the 220ms branch, which is why the dock still tucks within
-        // half a second of walking away.
-        interval: root._lastEdgeDistance < root.liveExtent - 12 ? 6000 : 220
+        //   +2181ms leave dist= 92.2   +2243ms enter    (57ms)
+        //   +7152ms leave dist=103.0   +7209ms enter    (57ms)
+        //  +12031ms leave dist= 94.6  +12089ms enter    (58ms)
+        //
+        // The distances are 67 to 103 of a 117-deep mask, so no threshold
+        // separates them from a departure at ~117 by more than fourteen
+        // pixels — a rule that thin is a rule waiting to be wrong. What DOES
+        // separate them is time: a blink comes back in under 80ms and a
+        // departure never comes back. That is exactly what a tail measures, so
+        // the tail is the whole rule and its length is the only question.
+        //
+        // 400ms is five times the longest blink observed and short enough that
+        // hiding still reads as immediate — macOS has a comparable delay before
+        // its own dock slides away.
+        interval: 400
         repeat: false
     }
 

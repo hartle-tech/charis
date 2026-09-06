@@ -224,13 +224,20 @@ ShellRoot {
             off. */
         function hoverLog(): string {
             const d = root.settingsDock;
-            return d ? JSON.stringify(d.hoverLog) : "[]";
+            if (!d)
+                return "{}";
+            return JSON.stringify({
+                longestBlink: d.longestBlink,
+                events: d.hoverLog
+            });
         }
 
         function hoverLogClear(): void {
             const d = root.settingsDock;
-            if (d)
+            if (d) {
                 d.hoverLog = [];
+                d.longestBlink = 0;
+            }
         }
 
         /*! Open the settings window. Also reachable by right-clicking empty
