@@ -306,6 +306,27 @@ PanelWindow {
     // running that is not pinned. That is Apple's rule and it is the right one:
     // a pinned icon must never move because an unrelated app opened.
     readonly property var items: {
+        // 🔴 THIS BINDING HAD NO DEPENDENCY ON THE APPLICATION LIST, AND TWO
+        // ICONS LOST A STARTUP RACE FOREVER.
+        //
+        // `DesktopEntries` populates asynchronously. The row is rebuilt when
+        // the pinned list or the toplevels change — neither of which happens
+        // when the entry scan finishes — so any `byId` that came back null
+        // during those first milliseconds stayed null for the life of the
+        // process. On this machine it was reliably kitty and Steam: no entry
+        // means no icon, so they drew as letter tiles, and no entry also means
+        // `entry.execute()` has nothing to call, so clicking them did nothing.
+        // Both symptoms, one cause, and it looked exactly like the icon-theme
+        // problem it is not — three separate theories about missing themes,
+        // missing sizes and missing plugins were tested against files that were
+        // present the whole time.
+        //
+        // Proven by the dock's own readout: before a restart kitty and Steam
+        // report an EMPTY icon source, after one they report
+        // `image://icon/kitty` and load. The fix is to read the list here, so
+        // the row is derived again the moment it changes.
+        const _entries = DesktopEntries.applications.values.length;
+
         const byApp = {};
         const norm = s => (s || "").toLowerCase().replace(/\.desktop$/, "");
 
