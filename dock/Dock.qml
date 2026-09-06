@@ -38,11 +38,57 @@ PanelWindow {
     /*! Which screen edge to sit on. */
     property int edge: Qt.BottomEdge
 
-    /*! Icon size at rest. */
-    property real baseIconSize: 48
+    /*! Icon size at rest, as CONFIGURED. Read \l baseIconSize for the value
+        the dock actually uses. */
+    property real iconSize: 48
+
+    /*!
+        The smallest and largest icon this dock will accept.
+
+        🔴 NOTHING CLAMPED THE CONFIGURED SIZE. The two drag handlers each
+        carried their own literal `Math.max(24, Math.min(128, …))`, so the
+        GESTURES were bounded and every other route in was not: a hand-edited
+        config, the settings slider, the aphrOS configurator, or a stale file
+        could ask for 4 or 4000 and the dock would try. At 4 the icons are
+        smaller than their own running indicator; at 4000 the band is taller
+        than the display, the exclusive zone swallows the desktop and the
+        surface is placed off the top of the screen — which this project has
+        already had once, from a resize that reached 131 on a 1152-tall output.
+
+        The maximum is a fraction of the OUTPUT, not a constant, because
+        "ridiculous" is a statement about the screen: 128px is a big dock on
+        this ultrawide and would be most of a netbook's height.
+    */
+    readonly property real minIconSize: 32
+    readonly property real maxIconSizeAllowed: Math.max(root.minIconSize + 8, Math.min(128, Math.round(root.travelExtent * 0.12)))
+
+    /*! The size in force: what was asked for, brought inside the limits. */
+    readonly property real baseIconSize: Math.max(root.minIconSize, Math.min(root.maxIconSizeAllowed, root.iconSize))
 
     /*! How much the icon directly under the cursor grows. */
     property real magnification: 1.9
+
+    /*! Whether the row magnifies at all. macOS puts this on a checkbox next to
+        the size slider, and plenty of people turn it off — a dock whose icons
+        move under the pointer is exactly what some people do not want. Kept
+        separate from \l magnification so switching it back on restores the
+        amount they had chosen rather than resetting it to 1. */
+    property bool magnify: true
+
+    /*!
+        Padding between the icons and the outside of the dock's background.
+
+        🔴 IT WAS DERIVED FROM THE ICON SPACING, and those are different
+        things. `spacing * 1.5` gave six pixels around a 128px icon — the
+        artwork ran almost to the panel's edge, which is the single most
+        obvious way this dock did not look like the one it is modelled on.
+        macOS keeps roughly a tenth of an icon of air on every side, and it
+        does not shrink when you tighten the gaps BETWEEN icons.
+
+        Negative means "derive it", so an existing config keeps working and a
+        person who wants it tighter can still say so.
+    */
+    property real iconPadding: -1
 
     /*! How far the magnification reaches, in resting cells. */
     property real influenceCells: 2.6
@@ -252,7 +298,7 @@ PanelWindow {
     property int stackSerial: 0
 
     readonly property bool horizontal: root.edge === Qt.BottomEdge || root.edge === Qt.TopEdge
-    readonly property real maxIconSize: root.baseIconSize * root.magnification
+    readonly property real maxIconSize: root.baseIconSize * (root.magnify ? root.magnification : 1)
     readonly property real cell: root.baseIconSize + root.spacing
 
     // ── Model ───────────────────────────────────────────────────────────
@@ -427,7 +473,7 @@ PanelWindow {
 
     Spring {
         id: magnify
-        target: (root.overBand || root.debugging) ? 1 : 0
+        target: (root.magnify && (root.overBand || root.debugging)) ? 1 : 0
         response: 0.28 * root._resp
         damping: 1.0
     }
@@ -523,6 +569,12 @@ PanelWindow {
             // set after its gesture ended is how auto-hide died last time, and
             // from outside the dock that is indistinguishable from the setting
             // being off.
+            minIconSize: root.minIconSize,
+            maxIconSizeAllowed: root.maxIconSizeAllowed,
+            iconSizeRequested: root.iconSize,
+            baseIconSize: root.baseIconSize,
+            bgPad: root.bgPad,
+            magnify: root.magnify,
             resizing: sepResize.active,
             gripping: gripDrag.active,
             dragging: drag.active,
@@ -634,7 +686,7 @@ PanelWindow {
     property real edgeGap: 0
 
     /*! Padding between the icons and the dock's background edge. */
-    readonly property real bgPad: root.spacing * 1.5
+    readonly property real bgPad: root.iconPadding >= 0 ? root.iconPadding : Math.max(4, Math.round(root.baseIconSize * 0.09))
 
     /*! Thickness of the dock's background at rest. */
     readonly property real band: root.baseIconSize + root.bgPad * 2
@@ -875,6 +927,33 @@ PanelWindow {
     */
     readonly property bool pointerPresent: hover.hovered || hoverTail.running
 
+    /*!
+        The last 200 hover transitions, with where the pointer was and what the
+        dock decided.
+
+        🔴 THREE ROUNDS OF THIS BUG WERE FIXED BY REASONING AND TWO OF THEM CAME
+        BACK. A hover that blinks is invisible in a screenshot, invisible in the
+        journal, and indistinguishable from the setting being off — the only way
+        to see it is to write down every transition with the pointer's position
+        and compare it against what the mouse was actually doing. So the dock
+        keeps that log itself, and `hoverLog` hands it over.
+    */
+    property var hoverLog: []
+
+    function _noteHover(kind: string, d: real): void {
+        const l = root.hoverLog.length > 199 ? root.hoverLog.slice(-199) : root.hoverLog.slice();
+        l.push({
+            t: Date.now(),
+            e: kind,
+            dist: Math.round(d * 10) / 10,
+            reveal: Math.round(reveal.value * 100) / 100,
+            live: Math.round(root.liveExtent),
+            tail: hoverTail.interval,
+            tucked: root.tuckedAway
+        });
+        root.hoverLog = l;
+    }
+
     Timer {
         id: hoverTail
 
@@ -896,21 +975,26 @@ PanelWindow {
         // out for ever. And a dock held out while the pointer sits on the
         // screen edge is not a compromise — that is the reveal strip's own
         // behaviour.
-        // 1500ms was still not enough: one gap in a 22-step slide outlasted it
-        // and the dock retracted once. The gaps are not bounded by anything the
-        // dock can see, so the hold must not be a race against them.
+        // 🔴 THE TEST IS "COULD THE POINTER HAVE LEFT FROM THERE", NOT A
+        // DISTANCE. An 8px rule fixed the screen's last row and left the rest:
+        // the dock still hid at random while the pointer was ON it, moving down
+        // toward the edge, because a spurious hover loss halfway up the band
+        // latched a distance of forty-something and took the short branch.
         //
-        // Six seconds, and it costs nothing, because of WHERE it applies.
-        // Leaving this dock is not a hover loss at the border — the surface is
-        // nearly the whole screen when revealed, so walking off the dock upward
-        // keeps the pointer on the surface until it exits a 249px mask and the
-        // latched distance is then ~249, which takes the 220ms branch and hides
-        // promptly. The only way to lose hover one pixel from the bottom of the
-        // display is to still be sitting on it: the pointer cannot go further
-        // down, and on a single output it cannot go sideways off the screen
-        // either. A dock held out while the pointer rests against the edge it
-        // hides into is not a compromise — that is what the reveal strip is.
-        interval: root._lastEdgeDistance <= 8 ? 6000 : 220
+        // The pointer can only leave the dock through the edge of its INPUT
+        // MASK. Revealed, that mask is `bandThickness` deep, so a genuine
+        // departure is a hover lost at a distance of about that. Tucked away it
+        // is the 16px trigger strip, and a departure is a loss at about 16. A
+        // loss well INSIDE whichever mask is current cannot be a departure —
+        // there is nowhere for the pointer to have gone — so it is the
+        // compositor blinking and the dock holds on.
+        //
+        // Six seconds for that case, because the gaps are not bounded by
+        // anything the dock can observe and a hold that races them loses
+        // eventually. It costs nothing: a real departure crosses the mask edge
+        // and takes the 220ms branch, which is why the dock still tucks within
+        // half a second of walking away.
+        interval: root._lastEdgeDistance < root.liveExtent - 12 ? 6000 : 220
         repeat: false
     }
 
@@ -948,17 +1032,31 @@ PanelWindow {
                 root._lastEdgeDistance = root.edgeDistanceOf(p);
         }
         onHoveredChanged: {
-            // The tail that rides through a hover that blinks off on the
-            // screen's last row of pixels; see Dock.pointerPresent.
+            // The tail that rides through a hover that blinks off; see
+            // Dock.pointerPresent.
+            const wasPresent = hoverTail.running;
             if (hover.hovered)
                 hoverTail.stop();
             else
                 hoverTail.restart();
+            root._noteHover(hover.hovered ? "enter" : "leave", root._lastEdgeDistance);
             if (!hover.hovered)
                 return;
             // Enter the row without a swipe across it. Without this the cursor
             // spring starts from wherever it was left last time and the whole
             // dock visibly ripples on entry.
+            //
+            // 🔴 BUT NOT WHEN THE POINTER NEVER ACTUALLY LEFT. `reset` SNAPS the
+            // magnification peak to wherever the pointer is. On the screen's
+            // bottom row the hover blinks off and on several times a second, and
+            // every re-entry snapped the peak — so sliding along the edge under
+            // the dock made the animation stutter and reappear somewhere else
+            // along the row, exactly as if the cursor had dived under the dock
+            // and touched it again in a different place. If the tail was still
+            // running this is not an entry, it is the same hover continuing, and
+            // the spring must be left to travel.
+            if (wasPresent)
+                return;
             const p = hover.point.position;
             cursor.reset(root.horizontal ? p.x : p.y);
         }
@@ -1206,7 +1304,7 @@ PanelWindow {
                     // would destroy its binding to the config exactly as the
                     // settings panel used to, and the dock would stop
                     // following its own config file after one drag.
-                    root.iconSizeLive(Math.max(24, Math.min(128, grip.startSize + d * dir)));
+                    root.iconSizeLive(Math.max(root.minIconSize, Math.min(root.maxIconSizeAllowed, grip.startSize + d * dir)));
                 }
             }
         }
@@ -1383,7 +1481,7 @@ PanelWindow {
                     // one-for-one — d_divider = bgPad + size/2, so Δsize = 2Δd
                     // means Δd_divider = Δd — which is both the fix and the
                     // reason macOS's handle feels glued to the cursor.
-                    root.iconSizeLive(Math.max(24, Math.min(128, sepResize.start + 2 * (d - sepResize.startEdgeDist))));
+                    root.iconSizeLive(Math.max(root.minIconSize, Math.min(root.maxIconSizeAllowed, sepResize.start + 2 * (d - sepResize.startEdgeDist))));
                 }
 
                 onSeparatorReleased: {

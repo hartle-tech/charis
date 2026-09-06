@@ -460,11 +460,23 @@ Item {
 
             Slider {
                 label: "Icon size"
-                from: 24
-                to: 128
+                // ⚠️ FROM THE DOCK'S OWN LIMITS, not from two more literals.
+                // The slider, the divider drag and the resize grip each used to
+                // carry their own 24..128 and the configured value was clamped
+                // by none of them; the dock states the range now and everything
+                // asks it.
+                from: root.dock.minIconSize
+                to: root.dock.maxIconSizeAllowed
                 value: root.dock.baseIconSize
                 onValueChanged: root.changed("iconSize", Math.round(value))
                 onSettled: v => root.committed("iconSize", Math.round(v))
+            }
+
+            Toggle {
+                label: "Magnify under the pointer"
+                checked: root.dock.magnify
+                onCheckedChanged: root.changed("magnify", checked)
+                onSettled: v => root.committed("magnify", v)
             }
 
             Slider {
@@ -475,6 +487,17 @@ Item {
                 value: root.dock.magnification
                 onValueChanged: root.changed("magnification", value)
                 onSettled: v => root.committed("magnification", v)
+            }
+
+            Slider {
+                label: "Padding around icons"
+                // -1 is "derive it from the icon size". The slider offers that
+                // as its left-hand end rather than hiding it behind a checkbox.
+                from: -1
+                to: 32
+                value: root.dock.iconPadding
+                onValueChanged: root.changed("iconPadding", Math.round(value))
+                onSettled: v => root.committed("iconPadding", Math.round(v))
             }
 
             Slider {

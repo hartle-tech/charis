@@ -150,6 +150,8 @@ ShellRoot {
         function config(): string {
             return JSON.stringify({
                 iconSize: cfg.iconSize,
+                magnify: cfg.magnify,
+                iconPadding: cfg.iconPadding,
                 magnification: cfg.magnification,
                 edgeGap: cfg.edgeGap,
                 autoHide: cfg.autoHide,
@@ -211,6 +213,24 @@ ShellRoot {
                 items: out,
                 panel: d.panelRect()
             });
+        }
+
+        /*! Every hover transition the dock has seen, with the pointer's
+            distance from the screen edge and what the dock decided.
+
+            The only way to match "it hid while I was hovering it" to what the
+            mouse was doing. A blink is invisible in a screenshot, absent from
+            the journal, and indistinguishable from auto-hide being switched
+            off. */
+        function hoverLog(): string {
+            const d = root.settingsDock;
+            return d ? JSON.stringify(d.hoverLog) : "[]";
+        }
+
+        function hoverLogClear(): void {
+            const d = root.settingsDock;
+            if (d)
+                d.hoverLog = [];
         }
 
         /*! Open the settings window. Also reachable by right-clicking empty
@@ -451,6 +471,13 @@ ShellRoot {
 
             // ── Appearance ──────────────────────────────────────────────
             property real edgeGap: 8
+
+            /*! Whether the row magnifies at all. */
+            property bool magnify: true
+
+            /*! Air around the icons inside the panel. Negative derives it from
+                the icon size, which is what macOS's proportions amount to. */
+            property real iconPadding: -1
             /*! Gap between icons.
                 🔴 8 WAS TOO LOOSE. With `bgPad` at 1.5x the spacing, 8 put 12
                 pixels of panel above and below the icons and 8 between every
@@ -535,7 +562,9 @@ ShellRoot {
             screen: dock.modelData
 
             pinned: cfg.pinned
-            baseIconSize: cfg.iconSize
+            iconSize: cfg.iconSize
+            magnify: cfg.magnify
+            iconPadding: cfg.iconPadding
             magnification: cfg.magnification
             autoHide: cfg.autoHide
             folders: cfg.folders
