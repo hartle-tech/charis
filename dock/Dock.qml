@@ -444,7 +444,7 @@ PanelWindow {
         // ⚠️ A SEPARATOR RESIZE HOLDS IT OUT TOO. Dragging the divider moves the
         // pointer toward the screen edge the dock hides into, and without this
         // the dock slid away underneath the gesture that was resizing it.
-        target: (!root.autoHide || root.pointerPresent || root.popupOpen || drag.active || sepResize.startEdgeDist >= 0 || gripDrag.active || root.debugging) ? 1 : 0
+        target: (!root.autoHide || root.pointerPresent || root.popupOpen || drag.active || sepResize.active || gripDrag.active || root.debugging) ? 1 : 0
         // Slower and softer than a menu: the dock is a large, heavy object and
         // should arrive like one. Caelestia's own panels sit near 0.38s.
         response: 0.46 * root._resp
@@ -519,6 +519,13 @@ PanelWindow {
             pointerEdgeDistance: root.pointerEdgeDistance,
             overBand: root.overBand,
             popupOpen: root.popupOpen,
+            // Every latch that can hold the reveal out. One of these staying
+            // set after its gesture ended is how auto-hide died last time, and
+            // from outside the dock that is indistinguishable from the setting
+            // being off.
+            resizing: sepResize.active,
+            gripping: gripDrag.active,
+            dragging: drag.active,
             start: root.layout.start
         };
     }
@@ -1343,6 +1350,7 @@ PanelWindow {
 
                 // The separator resizes the dock, exactly as it does on macOS.
                 onSeparatorPressed: {
+                    sepResize.active = true;
                     sepResize.start = root.baseIconSize;
                     sepResize.startEdgeDist = -1;
                 }
@@ -1380,7 +1388,18 @@ PanelWindow {
 
                 onSeparatorReleased: {
                     root.iconSizeRequested(root.baseIconSize);
+                    // 🔴 ALL OF IT. `start` was cleared here and
+                    // `startEdgeDist` was not, and the reveal used to be held
+                    // out by `startEdgeDist >= 0` — a value that is only ever
+                    // negative before the first frame of a drag. So one resize
+                    // pinned the dock open for the rest of the process's life:
+                    // auto-hide stopped working and toggling the setting off
+                    // and on could not help, because the term was ORed in
+                    // beside it. Reported as "after changing its size via the
+                    // separator it stopped auto-hiding".
+                    sepResize.active = false;
                     sepResize.start = 0;
+                    sepResize.startEdgeDist = -1;
                 }
             }
         }
@@ -1388,6 +1407,18 @@ PanelWindow {
 
     QtObject {
         id: sepResize
+
+        /*! A divider drag is in progress.
+
+            ⚠️ A FLAG SET BY THE GESTURE, NOT A COORDINATE THAT HAPPENS TO BE
+            SET. The reveal used to ask `startEdgeDist >= 0`, which is a
+            question about a measurement, not about whether anything is being
+            dragged — and a measurement that is only negative before the first
+            frame of a drag answers "yes, still resizing" forever afterwards.
+            One resize and the dock never auto-hid again. Whether a gesture is
+            running is the gesture's own business to state. */
+        property bool active: false
+
         // The size the dock had when this drag began. Measuring each frame
         // against the LIVE size instead makes the gesture compound with itself
         // and the dock runs away from the pointer.
