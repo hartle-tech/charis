@@ -133,6 +133,35 @@ Item {
         only fix is letting them substitute one. */
     property string iconOverride: ""
 
+    /*!
+        Bumped to make the icon's source binding re-run.
+
+        🔴 AN ICON THAT FAILED TO RESOLVE ONCE NEVER CAME BACK. `Quickshell.iconPath`
+        is a function call inside a binding, so it re-evaluates only when one of
+        its arguments changes — and the thing that actually changes underneath
+        is the icon THEME, which is not an argument. On this machine a system
+        rebuild repointed the profile symlinks under the running dock and it
+        spent the rest of the session drawing kitty and Steam as letter tiles
+        while every other icon was fine. The process was healthy; the lookup had
+        returned "" for a moment and nothing ever asked again.
+
+        A letter tile is the single most conspicuous way this dock can look
+        broken, so the lookup is retried — a few times, with a widening gap, and
+        then it stops, because an icon that is genuinely absent must not have
+        the dock polling for it forever.
+    */
+    property int iconNonce: 0
+
+    Timer {
+        id: iconRetry
+        // 1s, 2s, 4s, 8s, 16s, 32s: covers a converge swapping the profile
+        // symlinks without becoming a background poll.
+        interval: 1000 * Math.pow(2, Math.min(5, root.iconNonce))
+        repeat: false
+        running: root.iconNonce < 6 && (icon.status === Image.Error || launcherImg.status === Image.Error || folderIcon.status === Image.Error)
+        onTriggered: root.iconNonce += 1
+    }
+
     readonly property bool isSeparator: root.kind === "separator"
 
     /*! How much of the dock's background lies BEYOND this item, between its
@@ -542,7 +571,13 @@ Item {
             visible: root.kind === "app" && icon.status === Image.Ready
             anchors.fill: parent
             fillMode: Image.PreserveAspectFit
-            source: root.iconOverride !== "" ? (root.iconOverride.startsWith("/") ? "file://" + root.iconOverride : root.iconOverride) : (root.entry ? Quickshell.iconPath(root.entry.icon, "application-x-executable") : "")
+            source: {
+                // Read so a retry re-runs this binding; see root.iconNonce.
+                const retry = root.iconNonce;
+                if (root.iconOverride !== "")
+                    return root.iconOverride.startsWith("/") ? "file://" + root.iconOverride : root.iconOverride;
+                return root.entry ? Quickshell.iconPath(root.entry.icon, "application-x-executable") : "";
+            }
             sourceSize.width: root.decodeSize
             sourceSize.height: root.decodeSize
             asynchronous: true
@@ -559,7 +594,10 @@ Item {
             // A chain, because no single name is present in every theme:
             // whatever the default handler declares, then the freedesktop
             // generic, then a plain folder.
-            source: Quickshell.iconPath(root.launcherIcon, true) || Quickshell.iconPath("system-file-manager", true) || Quickshell.iconPath("folder", true)
+            source: {
+                const retry = root.iconNonce;
+                return Quickshell.iconPath(root.launcherIcon, true) || Quickshell.iconPath("system-file-manager", true) || Quickshell.iconPath("folder", true);
+            }
             sourceSize.width: root.decodeSize
             sourceSize.height: root.decodeSize
             asynchronous: true
@@ -590,7 +628,12 @@ Item {
             // below never gets its turn and the dock displays the missing
             // texture. Passing `true` returns an empty string when the icon
             // genuinely is not there, which is the only answer this can act on.
-            source: root.iconOverride !== "" ? (root.iconOverride.startsWith("/") ? "file://" + root.iconOverride : root.iconOverride) : (Quickshell.iconPath(root.folderIconName, true) || Quickshell.iconPath("folder", true))
+            source: {
+                const retry = root.iconNonce;
+                if (root.iconOverride !== "")
+                    return root.iconOverride.startsWith("/") ? "file://" + root.iconOverride : root.iconOverride;
+                return Quickshell.iconPath(root.folderIconName, true) || Quickshell.iconPath("folder", true);
+            }
             sourceSize.width: root.decodeSize
             sourceSize.height: root.decodeSize
             asynchronous: true

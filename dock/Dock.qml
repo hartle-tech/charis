@@ -444,7 +444,7 @@ PanelWindow {
         // ⚠️ A SEPARATOR RESIZE HOLDS IT OUT TOO. Dragging the divider moves the
         // pointer toward the screen edge the dock hides into, and without this
         // the dock slid away underneath the gesture that was resizing it.
-        target: (!root.autoHide || hover.hovered || root.popupOpen || drag.active || sepResize.startEdgeDist >= 0 || gripDrag.active || root.debugging) ? 1 : 0
+        target: (!root.autoHide || root.pointerPresent || root.popupOpen || drag.active || sepResize.startEdgeDist >= 0 || gripDrag.active || root.debugging) ? 1 : 0
         // Slower and softer than a menu: the dock is a large, heavy object and
         // should arrive like one. Caelestia's own panels sit near 0.38s.
         response: 0.46 * root._resp
@@ -502,8 +502,24 @@ PanelWindow {
             magnifyAmount: magnify.value,
             cursor: cursor.value,
             hovered: hover.hovered,
+            pointerPresent: root.pointerPresent,
             edge: root.edge,
-            horizontal: root.horizontal
+            horizontal: root.horizontal,
+            // Everything the auto-hide decision is made from. Reported rather
+            // than inferred for the same reason the rectangle is: a dock that
+            // hides while the pointer is on it cannot be diagnosed from a
+            // screenshot, and the two candidate causes — the pointer leaving
+            // the input mask, and the reveal spring being told to retract —
+            // look identical on screen.
+            reveal: reveal.value,
+            revealTarget: reveal.target,
+            liveExtent: root.liveExtent,
+            tuckedAway: root.tuckedAway,
+            autoHide: root.autoHide,
+            pointerEdgeDistance: root.pointerEdgeDistance,
+            overBand: root.overBand,
+            popupOpen: root.popupOpen,
+            start: root.layout.start
         };
     }
 
@@ -716,7 +732,7 @@ PanelWindow {
         pointer it is currently receiving — and the threshold is low enough that
         it only closes once the dock has genuinely finished leaving.
     */
-    readonly property bool tuckedAway: root.autoHide && !root.debugging && !hover.hovered && !root.popupOpen && reveal.value < 0.005
+    readonly property bool tuckedAway: root.autoHide && !root.debugging && !root.pointerPresent && !root.popupOpen && reveal.value < 0.005
 
     /*!
         The SURFACE always reserves room for the tear gesture; the INPUT MASK
@@ -819,15 +835,65 @@ PanelWindow {
         No second item, no stacking order, no input region that can disagree
         with the thing it is supposed to describe.
     */
-    readonly property real pointerEdgeDistance: {
-        if (!hover.hovered)
-            return Number.MAX_VALUE;
-        const p = hover.point.position;
+    /*!
+        Hover, with a short tail — and the tail is not a nicety.
+
+        🔴 THE LAST ROW OF PIXELS ON THE SCREEN DROPS HOVER WHILE THE POINTER
+        MOVES ALONG IT. Measured by sliding the pointer left across the bottom
+        of the display in 90px steps and asking the dock what it thought after
+        each one:
+
+        \badcode
+        y = 1151:  T F F T F F T F F T F F T F F T F F T F F T
+        y = 1148:  T T T T T T T T T T T T T T T T T T T T T T
+        y = 1145:  T T T T T T T T T T T T T T T T T T T T T T
+        y = 1120:  T T T T T T T T T T T T T T T T T T T T T T
+        \endcode
+
+        Only y = 1151 — the very last row of an 1152-tall output, which is the
+        row the pointer sits on the moment you push it into the bottom of the
+        screen. Held STILL there it is hovered indefinitely; it is motion along
+        that row that drops it, two samples in three. Reported exactly as: the
+        dock pops up as you approach, hides when you touch the border, and
+        "either comes up or glitches" when you lift off it again.
+
+        Whatever the compositor is doing on its last row, the dock has no
+        business believing it. A pointer does not leave a dock and come back
+        thirty times a second, so a hover that blinks off for a moment is a lie
+        about the world and the dock should ride through it. 220ms is longer
+        than any blink observed here and shorter than the pause before someone
+        who has genuinely left would notice the dock still up.
+
+        This is also what makes travelling to a menu survive: it is the same
+        problem with a different cause, and the same answer.
+    */
+    readonly property bool pointerPresent: hover.hovered || hoverTail.running
+
+    Timer {
+        id: hoverTail
+        interval: 220
+        repeat: false
+    }
+
+    /*! The last edge distance seen while the pointer was genuinely on the
+        surface. Latched, so the magnification does not collapse and re-expand
+        during a hover blink — `hover.point.position` is meaningless once the
+        handler says the pointer is gone. */
+    property real _lastEdgeDistance: Number.MAX_VALUE
+
+    /*! Edge distance for a point in the surface's frame. */
+    function edgeDistanceOf(p: point): real {
         return root.horizontal ? (root.edge === Qt.BottomEdge ? root.height - p.y : p.y) : (root.edge === Qt.RightEdge ? root.width - p.x : p.x);
     }
 
+    // ⚠️ The latch is written from the handler, never from inside this binding.
+    // Assigning `_lastEdgeDistance` in a binding that also READS it is a
+    // binding loop, and QML's answer to a loop is to stop evaluating — which
+    // would freeze the magnification rather than fix it.
+    readonly property real pointerEdgeDistance: hover.hovered ? root.edgeDistanceOf(hover.point.position) : (root.pointerPresent ? root._lastEdgeDistance : Number.MAX_VALUE)
+
     /*! The pointer is on the dock itself, rather than merely on its surface. */
-    readonly property bool overBand: hover.hovered && root.pointerEdgeDistance <= root.bandThickness + 8
+    readonly property bool overBand: root.pointerPresent && root.pointerEdgeDistance <= root.bandThickness + 8
 
     /*! Something is open that the pointer has to be able to travel to. */
     readonly property bool popupOpen: menu.popupExtent > 0 || stack.popupExtent > 0
@@ -837,8 +903,18 @@ PanelWindow {
         onPointChanged: {
             const p = hover.point.position;
             cursor.target = root.horizontal ? p.x : p.y;
+            // Latched here rather than in the binding that reads it: see
+            // pointerEdgeDistance.
+            if (hover.hovered)
+                root._lastEdgeDistance = root.edgeDistanceOf(p);
         }
         onHoveredChanged: {
+            // The tail that rides through a hover that blinks off on the
+            // screen's last row of pixels; see Dock.pointerPresent.
+            if (hover.hovered)
+                hoverTail.stop();
+            else
+                hoverTail.restart();
             if (!hover.hovered)
                 return;
             // Enter the row without a swipe across it. Without this the cursor
@@ -909,8 +985,14 @@ PanelWindow {
             width: root.horizontal ? root.layout.total + content.bgPad * 2 : content.band
             height: root.horizontal ? content.band : root.layout.total + content.bgPad * 2
 
-            x: root.horizontal ? (content.width - width) / 2 : (root.edge === Qt.LeftEdge ? content.edgeGap : content.bandStart)
-            y: root.horizontal ? (root.edge === Qt.BottomEdge ? content.bandStart : content.edgeGap) : (content.height - height) / 2
+            // 🔴 FROM THE ROW'S START, NOT FROM THE CENTRE OF THE SURFACE.
+            // The row is no longer centred: it is anchored so the icon under
+            // the pointer stays under the pointer, which means it SLIDES as
+            // the pointer moves along it (see MagnifiedRow.metrics). A
+            // background that stays centred while the row slides leaves the
+            // icons hanging off one end of it.
+            x: root.horizontal ? root.layout.start - content.bgPad : (root.edge === Qt.LeftEdge ? content.edgeGap : content.bandStart)
+            y: root.horizontal ? (root.edge === Qt.BottomEdge ? content.bandStart : content.edgeGap) : root.layout.start - content.bgPad
 
             radius: Math.min(width, height) * root.cornerRoundness
             smoothing: 1
