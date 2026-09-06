@@ -152,14 +152,43 @@ Item {
     */
     property int iconNonce: 0
 
+    /*!
+        True for one beat of the retry, with every icon source blanked.
+
+        🔴 RE-RUNNING THE BINDING IS NOT ENOUGH, AND THE FIRST VERSION OF THIS
+        FIX PROVED IT. `Image` ignores an assignment of the URL it already has
+        and caches by URL, so a lookup that resolves to the SAME path it failed
+        on is a no-op: the retry ran, the binding re-evaluated, and the letter
+        tile stayed. Measured — point an override at a file that does not exist,
+        create the file, wait past the whole ladder: no change.
+
+        So the source is cleared first and restored a beat later, which is the
+        only thing Image treats as a genuinely new load. Two phases, both driven
+        from the same timer.
+
+        ⚠️ Through a BINDING, never by assigning `icon.source` from script.
+        Assigning a bound property destroys the binding, and the icon would then
+        never follow the app's entry again — this file has been bitten by that
+        rule twice already, on `x` and on `baseIconSize`.
+    */
+    property bool iconBlank: false
+
     Timer {
         id: iconRetry
-        // 1s, 2s, 4s, 8s, 16s, 32s: covers a converge swapping the profile
-        // symlinks without becoming a background poll.
-        interval: 1000 * Math.pow(2, Math.min(5, root.iconNonce))
+        // 60ms with the source cleared, then 1s, 2s, 4s, 8s, 16s, 32s between
+        // attempts: long enough to cover a converge swapping the profile
+        // symlinks, short of a background poll for artwork that is not there.
+        interval: root.iconBlank ? 60 : 1000 * Math.pow(2, Math.min(5, root.iconNonce))
         repeat: false
-        running: root.iconNonce < 6 && (icon.status === Image.Error || launcherImg.status === Image.Error || folderIcon.status === Image.Error)
-        onTriggered: root.iconNonce += 1
+        running: root.iconNonce < 6 && (root.iconBlank || icon.status === Image.Error || launcherImg.status === Image.Error || folderIcon.status === Image.Error)
+        onTriggered: {
+            if (root.iconBlank) {
+                root.iconBlank = false;
+                root.iconNonce += 1;
+            } else {
+                root.iconBlank = true;
+            }
+        }
     }
 
     readonly property bool isSeparator: root.kind === "separator"
@@ -574,6 +603,8 @@ Item {
             source: {
                 // Read so a retry re-runs this binding; see root.iconNonce.
                 const retry = root.iconNonce;
+                if (root.iconBlank)
+                    return "";
                 if (root.iconOverride !== "")
                     return root.iconOverride.startsWith("/") ? "file://" + root.iconOverride : root.iconOverride;
                 return root.entry ? Quickshell.iconPath(root.entry.icon, "application-x-executable") : "";
@@ -596,6 +627,8 @@ Item {
             // generic, then a plain folder.
             source: {
                 const retry = root.iconNonce;
+                if (root.iconBlank)
+                    return "";
                 return Quickshell.iconPath(root.launcherIcon, true) || Quickshell.iconPath("system-file-manager", true) || Quickshell.iconPath("folder", true);
             }
             sourceSize.width: root.decodeSize
@@ -630,6 +663,8 @@ Item {
             // genuinely is not there, which is the only answer this can act on.
             source: {
                 const retry = root.iconNonce;
+                if (root.iconBlank)
+                    return "";
                 if (root.iconOverride !== "")
                     return root.iconOverride.startsWith("/") ? "file://" + root.iconOverride : root.iconOverride;
                 return Quickshell.iconPath(root.folderIconName, true) || Quickshell.iconPath("folder", true);
