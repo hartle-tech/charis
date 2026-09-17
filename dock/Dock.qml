@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import QtQuick.Effects
 import Quickshell
 import Quickshell.Wayland
 import Charis
@@ -147,7 +148,7 @@ PanelWindow {
         wallpaper IS the backdrop, completely and not approximately, and
         refracting it is not a cheat standing in for the real thing — for a
         dock anchored to a screen edge it is the real thing. */
-    property bool useGlass: false
+    property bool useGlass: true
 
     /*! An explicit backdrop, if the embedder has something better than the
         wallpaper — a floating dock over a canvas, say. Left null, the dock
@@ -164,7 +165,25 @@ PanelWindow {
         does nothing — this is how you tell them apart without guessing. */
     readonly property string glassDiag: `useGlass=${root.useGlass} wallpaper=${root.wallpaper !== ""} paperStatus=${paper.status} paperSize=${paper.implicitWidth}x${paper.implicitHeight} backdrop=${root._backdrop !== null} screen=${root.screenWidth}x${root.screenHeight} surface=${root.width}x${root.height}`
 
-    readonly property Item _backdrop: root.backdrop ?? (paper.status === Image.Ready ? wallpaperImage : null)
+    /*! The two things the material needs: the region behind the dock,
+        blurred for its face and sharp for its bevel.
+
+        🔥 WHY BOTH. Measured on the Charis bench, 2026-09-17 23:55: handed
+        only a blurred source, a perfectly correct lens renders as a FLAT
+        TRANSLUCENT SLAB — displacing a sample of an image whose detail has
+        already been averaged away moves nothing an eye can see. A real sheet
+        of glass is cloudy in the middle and sharp at its ground-off edge.
+        That single fact is the difference between this reading as glass and
+        reading as the frosted rectangle every Linux panel has had for a
+        decade.
+
+        🔥 AND WHY TWO SEPARATE IMAGES rather than one blurred in place: the
+        blur's source would then sit inside a container the material hides,
+        and an item Qt has taken out of the scene renders NOTHING into a
+        texture provider. The second decode is free — Image caching means both
+        read the same file once. */
+    readonly property Item _backdrop: root.backdrop ?? (paper.status === Image.Ready ? wallpaperBlurImage : null)
+    readonly property Item _sharpBackdrop: root.backdrop ? null : (paper.status === Image.Ready ? wallpaperImage : null)
 
     /*!
         The wallpaper, drawn at SCREEN size and offset so that this item's
@@ -239,6 +258,42 @@ PanelWindow {
             // made every icon in this dock soft.
             sourceSize.width: root.screenWidth * Math.max(1, Screen.devicePixelRatio)
             sourceSize.height: root.screenHeight * Math.max(1, Screen.devicePixelRatio)
+        }
+    }
+
+    /*! The same crop of the wallpaper, blurred, for the face of the glass.
+        Deliberately a near-clone of the item above rather than a MultiEffect
+        wrapped around it — see \l _backdrop for why sharing one source does
+        not work. */
+    Item {
+        id: wallpaperBlurImage
+        visible: root.useGlass && root.backdrop === null
+        x: 0
+        y: 0
+        width: root.width
+        height: root.height
+        clip: true
+
+        Image {
+            id: paperBlur
+            source: paper.source
+            width: root.screenWidth
+            height: root.screenHeight
+            x: -root.surfaceX
+            y: -(root.screenHeight - root.height - root.surfaceY)
+            fillMode: Image.PreserveAspectCrop
+            cache: true
+            asynchronous: true
+            sourceSize.width: root.screenWidth * Math.max(1, Screen.devicePixelRatio)
+            sourceSize.height: root.screenHeight * Math.max(1, Screen.devicePixelRatio)
+            visible: false
+            layer.enabled: true
+            layer.effect: MultiEffect {
+                blurEnabled: true
+                blurMax: 48
+                blur: 0.85
+                saturation: 0.18
+            }
         }
     }
 
@@ -1271,7 +1326,14 @@ PanelWindow {
             y: bg.y
             width: bg.width
             height: bg.height
-            opacity: reveal.value * (root.useGlass || root.blurAmount > 0 ? 1 : 0)
+            // 🔴 OFF WHEN THE MATERIAL IS ON. These two hairlines were a
+            // stand-in for a glass edge while there was no glass. With the
+            // real thing they are a DRAWN OUTLINE sitting on top of it, which
+            // is precisely the "weird board around it" and "weird white line
+            // at the top" an operator reported about the sibling switcher on
+            // 2026-09-17. An Apple panel has no stroke: its edge is the
+            // Fresnel term brightening where the surface turns over.
+            opacity: reveal.value * (root.useGlass ? 0 : (root.blurAmount > 0 ? 1 : 0))
             visible: opacity > 0.01
 
             // Top bevel: brightest in the middle, fading at the corners, the
@@ -1333,13 +1395,26 @@ PanelWindow {
             width: bg.width
             height: bg.height
             backdrop: root._backdrop
-            // The dock's own wallpaper exists only to be sampled; it must not
-            // be painted over the desktop through a transparent surface.
+            sharpBackdrop: root._sharpBackdrop
+            // The dock's own wallpaper copies exist only to be sampled; they
+            // must not be painted over the desktop through a transparent
+            // surface.
             hideBackdrop: root.backdrop === null
+            hideSharpBackdrop: root.backdrop === null
             radius: Math.min(width, height) * root.cornerRoundness
             smoothing: 1
-            refraction: root.blurAmount
-            thickness: Math.max(6, root.blurAmount * 1.4)
+            // Measured on the bench rather than chosen by eye. `blurAmount`
+            // no longer sets the lens: it described a blur radius, and this
+            // material does not blur.
+            thickness: 16
+            refraction: 34
+            dispersion: 0.55
+            bevel: 1.0
+            rim: 0.34
+            rimWidth: 20
+            fresnel: 0.30
+            clarity: 0.85
+            lift: 0.12
             tint: root.panelColor
             tintAmount: root.panelOpacity * 0.5
             opacity: reveal.value

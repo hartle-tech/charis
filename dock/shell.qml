@@ -537,7 +537,13 @@ ShellRoot {
             property real influenceCells: 2.6
 
             // ── Material ────────────────────────────────────────────────
-            property bool useGlass: false
+            // 🔴 FALSE FOR ITS WHOLE LIFE, because it rendered nothing: the
+            // material had no backdrop wired to it, so flipping this changed
+            // 0.0 pixels — measured twice. Both halves are fixed now (a
+            // blurred crop AND a sharp one, and a source rectangle that is
+            // recomputed instead of frozen at 0x0), so the default is what the
+            // dock is actually meant to look like.
+            property bool useGlass: true
             property real blurAmount: 12
 
             // Compositor blur behind the dock. Applied through Hyprland rather
