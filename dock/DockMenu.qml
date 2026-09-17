@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import Quickshell
+import Quickshell.Hyprland
 import Charis
 
 /*!
@@ -76,6 +77,69 @@ Item {
 
     function close(): void {
         root.app = null;
+    }
+
+    // ── Windows come back to where the pointer is ──────────────────────
+    //
+    // On Hyprland a window can be minimised, parked on a special workspace
+    // (aphrOS hides windows that way), or live on another display. Plain
+    // activate() would open the special workspace or move focus to the other
+    // display. Bring it onto the focused display's current virtual screen
+    // first, then focus it. Without Hyprland this is activate(), as before.
+    function hyprFor(t: var): var {
+        if (!Hyprland.monitors || Hyprland.monitors.values.length === 0)
+            return null;
+        for (const h of Hyprland.toplevels.values)
+            if (h.wayland === t)
+                return h;
+        return null;
+    }
+
+    function displayNumber(name: string): int {
+        const vals = Hyprland.monitors.values;
+        let me = null;
+        for (const m of vals)
+            if (m.name === name)
+                me = m;
+        if (!me)
+            return 0;
+        let n = 1;
+        for (const m of vals)
+            if (m !== me && (m.x < me.x || (m.x === me.x && m.y < me.y)))
+                n++;
+        return n;
+    }
+
+    function whereabouts(t: var): string {
+        if (t.minimized)
+            return "   ·  minimised";
+        const h = hyprFor(t);
+        if (!h)
+            return "";
+        if (h.workspace && String(h.workspace.name).indexOf("special:") === 0)
+            return "   ·  hidden";
+        const here = Hyprland.focusedMonitor;
+        if (h.monitor && here && h.monitor.name !== here.name)
+            return "   ·  on Display " + displayNumber(h.monitor.name);
+        return "";
+    }
+
+    function bringBack(t: var): void {
+        const h = hyprFor(t);
+        const here = Hyprland.focusedMonitor;
+        if (h && here && here.activeWorkspace) {
+            const parked = h.workspace && String(h.workspace.name).indexOf("special:") === 0;
+            const elsewhere = h.monitor && h.monitor.name !== here.name;
+            if (parked || elsewhere) {
+                let addr = String(h.address || "");
+                if (addr.indexOf("0x") !== 0)
+                    addr = "0x" + addr;
+                Quickshell.execDetached(["hyprctl", "eval", "hl.dispatch(hl.dsp.window.move({ workspace = " + here.activeWorkspace.id + ", window = \"address:" + addr + "\", silent = true }))"]);
+            }
+        }
+        if (t.minimized)
+            t.minimized = false;
+        t.activate();
     }
 
     readonly property var entries: {
@@ -196,13 +260,18 @@ Item {
         // One entry per window when there are several, so the menu doubles as
         // a window list — the thing people actually reach a dock icon for once
         // an app has four documents open.
-        if (tls.length > 1)
-            for (const t of tls)
-                out.push({
-                    label: t.title || "Window",
-                    kind: "focus",
-                    toplevel: t
-                });
+        // Every window the app has, however many, with where it is: an
+        // open one, a minimised one, one parked in the hidden set, one on
+        // another display. Choosing one brings it back onto THIS display's
+        // current virtual screen and focuses it — the list is a way back,
+        // not just a way over.
+        for (const t of tls)
+            out.push({
+                label: (t.title || "Window") + root.whereabouts(t),
+                kind: "focus",
+                toplevel: t,
+                separated: t === tls[0]
+            });
 
         // Pin / unpin. This is the entry people look for FIRST on a running
         // app they have just decided they use every day, and its absence is
@@ -245,7 +314,7 @@ Item {
         else if (item.kind === "launch" && root.app.entry)
             root.app.entry.execute();
         else if (item.kind === "focus")
-            item.toplevel.activate();
+            root.bringBack(item.toplevel);
         else if (item.kind === "quit")
             for (const t of root.app.toplevels)
                 t.close();
